@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "muthur-central.fullname" . }}
+  labels:
+    {{- include "muthur-central.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "muthur-central.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        {{- include "muthur-central.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: {{ .Chart.Name }}
+          image: {{ include "muthur-central.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          envFrom:
+            - secretRef:
+                name: {{ include "muthur-central.fullname" . }}-secret
+          env:
+            - name: PORT
+              value: "8080"
+            - name: LOG_LEVEL
+              value: {{ .Values.config.logLevel | quote }}
+            - name: ANTHROPIC_MODEL
+              value: {{ .Values.config.anthropicModel | quote }}
+            - name: DEDUP_WINDOW_MINUTES
+              value: {{ .Values.config.dedupWindowMinutes | quote }}
+            - name: GRAFANA_BASE_URL
+              value: {{ .Values.config.grafanaBaseUrl | quote }}
+            - name: ALERTMANAGER_URL
+              value: {{ .Values.config.alertmanagerUrl | quote }}
+            - name: ALERTMANAGER_SILENCE_ENABLED
+              value: {{ .Values.config.alertmanagerSilenceEnabled | quote }}
+            - name: ALERTMANAGER_SILENCE_DURATION
+              value: {{ .Values.config.alertmanagerSilenceDuration | quote }}
+            - name: ROUTING_RULES_FILE
+              value: /config/routing.yaml
+            {{- range .Values.collectors }}
+            - name: COLLECTOR_TOKEN_{{ .clusterId | upper | replace "-" "_" }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "muthur-central.fullname" $ }}-secret
+                  key: {{ .tokenSecretKey }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "muthur-central.fullname" . }}-config

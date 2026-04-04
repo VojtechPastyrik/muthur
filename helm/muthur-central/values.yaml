@@ -1,0 +1,82 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/vojtechpastyrik/muthur-central
+  tag: ""
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: true
+  className: traefik
+  host: muthur.yourdomain.com
+  tls:
+    enabled: true
+    secretName: muthur-central-tls
+  annotations: {}
+
+routing:
+  rules:
+    - name: critical-all
+      match:
+        severity: critical
+      notify: [telegram, discord]
+    - name: warning-discord
+      match:
+        severity: warning
+      notify: [discord]
+    - name: info-silence
+      match:
+        severity: info
+      notify: []
+
+config:
+  anthropicModel: claude-opus-4-5
+  dedupWindowMinutes: 15
+  grafanaBaseUrl: https://grafana.yourdomain.com
+  alertmanagerUrl: http://alertmanager.monitoring.svc:9093
+  alertmanagerSilenceEnabled: false
+  alertmanagerSilenceDuration: 2h
+  logLevel: info
+
+collectors:
+  - clusterId: cluster-home
+    tokenSecretKey: collector-token-cluster-home
+  - clusterId: cluster-vps
+    tokenSecretKey: collector-token-cluster-vps
+
+externalSecrets:
+  enabled: true
+  secretStoreName: vault-backend
+  secretStoreKind: ClusterSecretStore
+  remoteSecretPath: muthur-central/prod
+  refreshInterval: 1h
+  collectorTokenKeys:
+    - collector-token-cluster-home
+    - collector-token-cluster-vps
+
+devSecrets:
+  enabled: false
+  anthropicApiKey: ""
+  collectorTokens:
+    - clusterId: cluster-home
+      token: "dev-token-home"
+    - clusterId: cluster-vps
+      token: "dev-token-vps"
+  telegramToken: ""
+  telegramChatId: ""
+  discordWebhookUrl: ""
+  slackWebhookUrl: ""
+  pagerdutyRoutingKey: ""
+  genericWebhookUrl: ""
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 100m
+    memory: 64Mi

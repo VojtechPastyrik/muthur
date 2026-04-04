@@ -1,0 +1,26 @@
+apiVersion: v2
+name: muthur-central
+description: AI-powered Kubernetes monitoring central agent
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.24.0-0"
+home: https://github.com/VojtechPastyrik/muthur-central
+sources:
+  - https://github.com/VojtechPastyrik/muthur-central
+maintainers:
+  - name: Vojtech Pastyrik
+    email: vojtech@pastyrik.dev
+    url: https://pastyrik.dev
+keywords:
+  - monitoring
+  - kubernetes
+  - alerting
+  - ai
+  - claude
+annotations:
+  artifacthub.io/license: MIT
+  artifacthub.io/prerelease: "false"
+  artifacthub.io/maintainers: |
+    - name: Vojtech Pastyrik
+      email: vojtech@pastyrik.dev
