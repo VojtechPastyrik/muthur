@@ -60,35 +60,41 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  helm-update:
+  charts:
     runs-on: ubuntu-latest
     needs: docker
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/checkout@v4
-        with:
-          repository: VojtechPastyrik/charts
-          token: ${{ secrets.CHARTS_REPO_TOKEN }}
-          path: charts-repo
+      - name: Install Helm
+        uses: azure/setup-helm@v4
 
-      - name: Update chart version and sync files
+      - name: Package chart
         run: |
-          VERSION="${{ github.ref_name }}"
-          VERSION="${VERSION#v}"
-          SRC="helm/muthur-central"
-          DEST="charts-repo/charts/muthur-central"
-          mkdir -p ${DEST}
-          cp -r ${SRC}/. ${DEST}/
-          sed -i "s/^version:.*/version: ${VERSION}/" ${DEST}/Chart.yaml
-          sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" ${DEST}/Chart.yaml
-          sed -i "s/tag: .*/tag: \"${VERSION}\"/" ${DEST}/values.yaml
+          VERSION=${GITHUB_REF_NAME#v}
+          helm package helm/muthur-central --version ${VERSION} --app-version ${VERSION}
 
-      - name: Commit and push
+      - name: Clone charts repo
+        run: |
+          git clone --branch gh-pages https://x-access-token:${{ secrets.CHARTS_REPO_TOKEN }}@github.com/vojtechpastyrik/charts.git charts-repo
+
+      - name: Update Helm repo index
+        run: |
+          cp muthur-central-*.tgz charts-repo/
+          cd charts-repo
+          if [ -f index.yaml ]; then
+            helm repo index . --url https://vojtechpastyrik.github.io/charts --merge index.yaml
+          else
+            helm repo index . --url https://vojtechpastyrik.github.io/charts
+          fi
+
+      - name: Push to charts repo
         run: |
           cd charts-repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add charts/muthur-central/
-          git diff --staged --quiet || git commit -m "chore: bump muthur-central to ${{ github.ref_name }}"
+          git add index.yaml muthur-central-*.tgz
+          git diff --staged --quiet || git commit -m "muthur-central ${GITHUB_REF_NAME}"
           git push
