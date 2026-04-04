@@ -1,6 +1,6 @@
 syntax = "proto3";
 package monitoring.v1;
-option go_package = "github.com/VojtechPastyrik/muthur-central/proto/v1";
+option go_package = "github.com/VojtechPastyrik/muthur/proto/v1";
 
 message AlertPayload {
   string cluster_id    = 1;

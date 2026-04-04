@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	pb "github.com/VojtechPastyrik/muthur-central/proto"
+	pb "github.com/VojtechPastyrik/muthur/proto"
 )
 
 func buildPrompt(payload *pb.AlertPayload) string {

@@ -11,18 +11,24 @@ import (
 )
 
 type Slack struct {
+	name       string
 	webhookURL string
 	client     *http.Client
 }
 
-func NewSlack(webhookURL string) *Slack {
-	return &Slack{
-		webhookURL: webhookURL,
-		client:     &http.Client{Timeout: 10 * time.Second},
+func newSlack(name string, cfg map[string]string) (Notifier, error) {
+	url := cfg["webhook_url"]
+	if url == "" {
+		return nil, fmt.Errorf("slack: webhook_url is required")
 	}
+	return &Slack{
+		name:       name,
+		webhookURL: url,
+		client:     &http.Client{Timeout: 10 * time.Second},
+	}, nil
 }
 
-func (s *Slack) Name() string { return "slack" }
+func (s *Slack) Name() string { return s.name }
 
 func (s *Slack) Send(ctx context.Context, msg *Message) error {
 	body := map[string]string{

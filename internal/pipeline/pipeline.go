@@ -6,12 +6,12 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/VojtechPastyrik/muthur-central/internal/dedup"
-	"github.com/VojtechPastyrik/muthur-central/internal/evaluator"
-	"github.com/VojtechPastyrik/muthur-central/internal/notify"
-	"github.com/VojtechPastyrik/muthur-central/internal/routing"
-	"github.com/VojtechPastyrik/muthur-central/internal/silence"
-	pb "github.com/VojtechPastyrik/muthur-central/proto"
+	"github.com/VojtechPastyrik/muthur/internal/dedup"
+	"github.com/VojtechPastyrik/muthur/internal/evaluator"
+	"github.com/VojtechPastyrik/muthur/internal/notify"
+	"github.com/VojtechPastyrik/muthur/internal/routing"
+	"github.com/VojtechPastyrik/muthur/internal/silence"
+	pb "github.com/VojtechPastyrik/muthur/proto"
 )
 
 type Pipeline struct {

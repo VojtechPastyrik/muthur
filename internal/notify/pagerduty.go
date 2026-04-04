@@ -12,20 +12,30 @@ import (
 const pagerDutyDefaultURL = "https://events.pagerduty.com/v2/enqueue"
 
 type PagerDuty struct {
+	name       string
 	routingKey string
 	url        string
 	client     *http.Client
 }
 
-func NewPagerDuty(routingKey string) *PagerDuty {
-	return &PagerDuty{
-		routingKey: routingKey,
-		url:        pagerDutyDefaultURL,
-		client:     &http.Client{Timeout: 10 * time.Second},
+func newPagerDuty(name string, cfg map[string]string) (Notifier, error) {
+	key := cfg["routing_key"]
+	if key == "" {
+		return nil, fmt.Errorf("pagerduty: routing_key is required")
 	}
+	url := cfg["url"]
+	if url == "" {
+		url = pagerDutyDefaultURL
+	}
+	return &PagerDuty{
+		name:       name,
+		routingKey: key,
+		url:        url,
+		client:     &http.Client{Timeout: 10 * time.Second},
+	}, nil
 }
 
-func (p *PagerDuty) Name() string { return "pagerduty" }
+func (p *PagerDuty) Name() string { return p.name }
 
 func (p *PagerDuty) Send(ctx context.Context, msg *Message) error {
 	severity := msg.Severity
@@ -49,9 +59,9 @@ func (p *PagerDuty) Send(ctx context.Context, msg *Message) error {
 			"group":    msg.ClusterID,
 			"class":    msg.AlertName,
 			"custom_details": map[string]string{
-				"namespace":  msg.Namespace,
-				"pod":        msg.PodName,
-				"grafana":    msg.GrafanaURL,
+				"namespace": msg.Namespace,
+				"pod":       msg.PodName,
+				"grafana":   msg.GrafanaURL,
 			},
 		},
 		"links": []map[string]string{

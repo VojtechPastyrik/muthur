@@ -10,18 +10,24 @@ import (
 )
 
 type Webhook struct {
+	name   string
 	url    string
 	client *http.Client
 }
 
-func NewWebhook(url string) *Webhook {
+func newWebhook(name string, cfg map[string]string) (Notifier, error) {
+	url := cfg["url"]
+	if url == "" {
+		return nil, fmt.Errorf("webhook: url is required")
+	}
 	return &Webhook{
+		name:   name,
 		url:    url,
 		client: &http.Client{Timeout: 10 * time.Second},
-	}
+	}, nil
 }
 
-func (w *Webhook) Name() string { return "webhook" }
+func (w *Webhook) Name() string { return w.name }
 
 func (w *Webhook) Send(ctx context.Context, msg *Message) error {
 	body := map[string]any{

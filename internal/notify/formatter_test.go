@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/VojtechPastyrik/muthur-central/internal/evaluator"
-	pb "github.com/VojtechPastyrik/muthur-central/proto"
+	"github.com/VojtechPastyrik/muthur/internal/evaluator"
+	pb "github.com/VojtechPastyrik/muthur/proto"
 )
 
 func TestFormatMessage_FullPayload(t *testing.T) {

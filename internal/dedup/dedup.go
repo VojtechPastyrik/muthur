@@ -8,7 +8,7 @@ import (
 
 	"go.uber.org/zap"
 
-	pb "github.com/VojtechPastyrik/muthur-central/proto"
+	pb "github.com/VojtechPastyrik/muthur/proto"
 )
 
 type Deduplicator struct {

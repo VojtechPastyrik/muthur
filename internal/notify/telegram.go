@@ -10,20 +10,30 @@ import (
 )
 
 type Telegram struct {
+	name   string
 	token  string
 	chatID string
 	client *http.Client
 }
 
-func NewTelegram(token, chatID string) *Telegram {
+func newTelegram(name string, cfg map[string]string) (Notifier, error) {
+	token := cfg["token"]
+	chatID := cfg["chat_id"]
+	if token == "" {
+		return nil, fmt.Errorf("telegram: token is required")
+	}
+	if chatID == "" {
+		return nil, fmt.Errorf("telegram: chat_id is required")
+	}
 	return &Telegram{
+		name:   name,
 		token:  token,
 		chatID: chatID,
 		client: &http.Client{Timeout: 10 * time.Second},
-	}
+	}, nil
 }
 
-func (t *Telegram) Name() string { return "telegram" }
+func (t *Telegram) Name() string { return t.name }
 
 func (t *Telegram) Send(ctx context.Context, msg *Message) error {
 	body := map[string]string{

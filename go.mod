@@ -1,4 +1,4 @@
-module github.com/VojtechPastyrik/muthur-central
+module github.com/VojtechPastyrik/muthur
 
 go 1.26.1
 

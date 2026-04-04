@@ -5,10 +5,10 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags="-w -s" -trimpath \
-    -o central ./cmd/central
+    -o muthur ./cmd/muthur
 
 FROM gcr.io/distroless/static:nonroot
-COPY --from=builder /app/central /central
+COPY --from=builder /app/muthur /muthur
 EXPOSE 8080
 USER nonroot:nonroot
-ENTRYPOINT ["/central"]
+ENTRYPOINT ["/muthur"]

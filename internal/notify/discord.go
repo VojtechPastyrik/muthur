@@ -10,18 +10,24 @@ import (
 )
 
 type Discord struct {
+	name       string
 	webhookURL string
 	client     *http.Client
 }
 
-func NewDiscord(webhookURL string) *Discord {
-	return &Discord{
-		webhookURL: webhookURL,
-		client:     &http.Client{Timeout: 10 * time.Second},
+func newDiscord(name string, cfg map[string]string) (Notifier, error) {
+	url := cfg["webhook_url"]
+	if url == "" {
+		return nil, fmt.Errorf("discord: webhook_url is required")
 	}
+	return &Discord{
+		name:       name,
+		webhookURL: url,
+		client:     &http.Client{Timeout: 10 * time.Second},
+	}, nil
 }
 
-func (d *Discord) Name() string { return "discord" }
+func (d *Discord) Name() string { return d.name }
 
 func (d *Discord) Send(ctx context.Context, msg *Message) error {
 	body := map[string]string{

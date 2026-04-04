@@ -1,53 +1,41 @@
 package routing
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"go.uber.org/zap"
 
-	pb "github.com/VojtechPastyrik/muthur-central/proto"
+	pb "github.com/VojtechPastyrik/muthur/proto"
 )
 
-func writeConfig(t *testing.T, content string) string {
-	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "routing.yaml")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
 func TestRouter_FirstMatchWins(t *testing.T) {
-	config := `rules:
-  - name: critical-all
-    match:
-      severity: critical
-    notify: [telegram, discord]
-  - name: warning-discord
-    match:
-      severity: warning
-    notify: [discord]
-  - name: info-silence
-    match:
-      severity: info
-    notify: []
-`
-	r, err := NewRouter(writeConfig(t, config), zap.NewNop())
-	if err != nil {
-		t.Fatal(err)
+	rules := []Rule{
+		{
+			Name:      "critical-all",
+			Match:     Match{Severity: "critical"},
+			Receivers: []string{"ops-telegram", "ops-discord"},
+		},
+		{
+			Name:      "warning-discord",
+			Match:     Match{Severity: "warning"},
+			Receivers: []string{"ops-discord"},
+		},
+		{
+			Name:      "info-silence",
+			Match:     Match{Severity: "info"},
+			Receivers: []string{},
+		},
 	}
+	r := New(rules, zap.NewNop())
 
 	targets := r.Route(&pb.AlertPayload{Severity: "critical", AlertName: "test"})
-	if len(targets) != 2 || targets[0] != "telegram" || targets[1] != "discord" {
-		t.Errorf("expected [telegram discord], got %v", targets)
+	if len(targets) != 2 || targets[0] != "ops-telegram" || targets[1] != "ops-discord" {
+		t.Errorf("expected [ops-telegram ops-discord], got %v", targets)
 	}
 
 	targets = r.Route(&pb.AlertPayload{Severity: "warning", AlertName: "test"})
-	if len(targets) != 1 || targets[0] != "discord" {
-		t.Errorf("expected [discord], got %v", targets)
+	if len(targets) != 1 || targets[0] != "ops-discord" {
+		t.Errorf("expected [ops-discord], got %v", targets)
 	}
 
 	targets = r.Route(&pb.AlertPayload{Severity: "info", AlertName: "test"})
@@ -57,44 +45,40 @@ func TestRouter_FirstMatchWins(t *testing.T) {
 }
 
 func TestRouter_ClusterMatch(t *testing.T) {
-	config := `rules:
-  - name: prod-critical
-    match:
-      severity: critical
-      cluster_id: cluster-prod
-    notify: [pagerduty]
-  - name: dev-all
-    match:
-      cluster_id: cluster-dev
-    notify: [discord]
-`
-	r, err := NewRouter(writeConfig(t, config), zap.NewNop())
-	if err != nil {
-		t.Fatal(err)
+	rules := []Rule{
+		{
+			Name:      "prod-critical",
+			Match:     Match{Severity: "critical", ClusterID: "cluster-prod"},
+			Receivers: []string{"oncall-pd"},
+		},
+		{
+			Name:      "dev-all",
+			Match:     Match{ClusterID: "cluster-dev"},
+			Receivers: []string{"dev-discord"},
+		},
 	}
+	r := New(rules, zap.NewNop())
 
 	targets := r.Route(&pb.AlertPayload{Severity: "critical", ClusterId: "cluster-prod"})
-	if len(targets) != 1 || targets[0] != "pagerduty" {
-		t.Errorf("expected [pagerduty], got %v", targets)
+	if len(targets) != 1 || targets[0] != "oncall-pd" {
+		t.Errorf("expected [oncall-pd], got %v", targets)
 	}
 
 	targets = r.Route(&pb.AlertPayload{Severity: "warning", ClusterId: "cluster-dev"})
-	if len(targets) != 1 || targets[0] != "discord" {
-		t.Errorf("expected [discord], got %v", targets)
+	if len(targets) != 1 || targets[0] != "dev-discord" {
+		t.Errorf("expected [dev-discord], got %v", targets)
 	}
 }
 
 func TestRouter_NoMatch(t *testing.T) {
-	config := `rules:
-  - name: critical-only
-    match:
-      severity: critical
-    notify: [telegram]
-`
-	r, err := NewRouter(writeConfig(t, config), zap.NewNop())
-	if err != nil {
-		t.Fatal(err)
+	rules := []Rule{
+		{
+			Name:      "critical-only",
+			Match:     Match{Severity: "critical"},
+			Receivers: []string{"ops-telegram"},
+		},
 	}
+	r := New(rules, zap.NewNop())
 
 	targets := r.Route(&pb.AlertPayload{Severity: "warning", AlertName: "test"})
 	if targets != nil {
@@ -103,20 +87,18 @@ func TestRouter_NoMatch(t *testing.T) {
 }
 
 func TestRouter_NamespaceMatch(t *testing.T) {
-	config := `rules:
-  - name: kube-system
-    match:
-      namespace: kube-system
-    notify: [slack]
-`
-	r, err := NewRouter(writeConfig(t, config), zap.NewNop())
-	if err != nil {
-		t.Fatal(err)
+	rules := []Rule{
+		{
+			Name:      "kube-system",
+			Match:     Match{Namespace: "kube-system"},
+			Receivers: []string{"ops-slack"},
+		},
 	}
+	r := New(rules, zap.NewNop())
 
 	targets := r.Route(&pb.AlertPayload{Namespace: "kube-system", AlertName: "test"})
-	if len(targets) != 1 || targets[0] != "slack" {
-		t.Errorf("expected [slack], got %v", targets)
+	if len(targets) != 1 || targets[0] != "ops-slack" {
+		t.Errorf("expected [ops-slack], got %v", targets)
 	}
 
 	targets = r.Route(&pb.AlertPayload{Namespace: "default", AlertName: "test"})

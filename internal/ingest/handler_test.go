@@ -9,7 +9,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 
-	pb "github.com/VojtechPastyrik/muthur-central/proto"
+	pb "github.com/VojtechPastyrik/muthur/proto"
 )
 
 type mockProcessor struct {

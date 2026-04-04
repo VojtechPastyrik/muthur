@@ -1,0 +1,170 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/vojtechpastyrik/muthur
+  tag: ""
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: true
+  className: traefik
+  host: muthur.yourdomain.com
+  tls:
+    enabled: true
+    secretName: muthur-tls
+  annotations: {}
+
+
+httpRoute:
+  enabled: false
+  host: muthur.yourdomain.com
+  parentRefs:
+    - name: web
+      namespace: default
+  annotations: {}
+
+gateway:
+  enabled: false
+  className: traefik
+  name: muthur
+  namespace: ""
+  listener:
+    port: 443
+    protocol: HTTPS
+    allowedRoutesNamespacesFrom: Same
+  tls:
+    enabled: true
+    secretName: muthur-tls
+
+ingressRoute:
+  enabled: false
+  entryPoints:
+    - websecure
+  host: muthur.yourdomain.com
+  tls:
+    enabled: true
+    secretName: muthur-tls
+  annotations: {}
+
+# --- Receivers ---
+# Define named notification receivers. Multiple receivers of the same type are
+# allowed — e.g. one Discord webhook for ops, another for dev.
+#
+# Each receiver has two sections:
+#
+#   config      — literal non-sensitive fields (chat_id, etc.)
+#   secretKeys  — map of field name → Secret key; the chart mounts the Secret
+#                 value as a file and the Go code reads it at runtime.
+#
+# Supported types and their fields:
+#   telegram:  required { token, chat_id }
+#   discord:   required { webhook_url }
+#   slack:     required { webhook_url }
+#   pagerduty: required { routing_key }, optional { url }
+#   webhook:   required { url }
+receivers: []
+# Example:
+# receivers:
+#   - name: ops-telegram
+#     type: telegram
+#     config:
+#       chat_id: "-100123456789"
+#     secretKeys:
+#       token: ops-telegram-token
+#
+#   - name: critical-discord
+#     type: discord
+#     secretKeys:
+#       webhook_url: critical-discord-webhook
+#
+#   - name: dev-discord
+#     type: discord
+#     secretKeys:
+#       webhook_url: dev-discord-webhook
+#
+#   - name: oncall-pd
+#     type: pagerduty
+#     secretKeys:
+#       routing_key: oncall-pagerduty-key
+
+# --- Routing ---
+# First matching rule wins. Empty match fields match anything. The `receivers`
+# field lists receiver names defined above.
+routing:
+  rules: []
+# Example:
+# routing:
+#   rules:
+#     - name: critical-prod
+#       match:
+#         severity: critical
+#         cluster_id: cluster-prod
+#       receivers: [ops-telegram, critical-discord, oncall-pd]
+#     - name: warning-dev
+#       match:
+#         severity: warning
+#         cluster_id: cluster-dev
+#       receivers: [dev-discord]
+
+config:
+  anthropicModel: claude-opus-4-5
+  dedupWindowMinutes: 15
+  grafanaBaseUrl: https://grafana.yourdomain.com
+  alertmanagerUrl: http://alertmanager.monitoring.svc:9093
+  alertmanagerSilenceEnabled: false
+  alertmanagerSilenceDuration: 2h
+  logLevel: info
+
+collectors:
+  - clusterId: cluster-home
+    tokenSecretKey: collector-token-cluster-home
+  - clusterId: cluster-vps
+    tokenSecretKey: collector-token-cluster-vps
+
+externalSecrets:
+  enabled: true
+  secretStoreName: vault-backend
+  secretStoreKind: ClusterSecretStore
+  remoteSecretPath: muthur/prod
+  refreshInterval: 1h
+  collectorTokenKeys:
+    - collector-token-cluster-home
+    - collector-token-cluster-vps
+  # Secret keys to fetch from the remote secret store for receivers.
+  # Each key must match a value referenced by receivers[*].secretKeys above.
+  # Each key becomes a file mounted at /secrets/receivers/<key> in the pod.
+  receiverSecretKeys: []
+  # Example:
+  # receiverSecretKeys:
+  #   - ops-telegram-token
+  #   - critical-discord-webhook
+  #   - dev-discord-webhook
+  #   - oncall-pagerduty-key
+
+devSecrets:
+  enabled: false
+  anthropicApiKey: ""
+  collectorTokens:
+    - clusterId: cluster-home
+      token: "dev-token-home"
+    - clusterId: cluster-vps
+      token: "dev-token-vps"
+  # Receiver secrets for local dev — map of Secret key name → value.
+  # Each key becomes a file mounted at /secrets/receivers/<key>.
+  receiverSecrets: {}
+  # Example:
+  # receiverSecrets:
+  #   ops-telegram-token: "1234567:ABC-DEF..."
+  #   critical-discord-webhook: "https://discord.com/api/webhooks/..."
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 100m
+    memory: 64Mi

@@ -1,0 +1,198 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "replicaCount": { "type": "integer", "minimum": 1 },
+    "image": {
+      "type": "object",
+      "properties": {
+        "repository": { "type": "string" },
+        "tag": { "type": "string" },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "type": { "type": "string" },
+        "port": { "type": "integer" }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "host": { "type": "string" },
+        "tls": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "secretName": { "type": "string" }
+          }
+        },
+        "annotations": { "type": "object" }
+      }
+    },
+    "httpRoute": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "host": { "type": "string" },
+        "parentRefs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "namespace": { "type": "string" }
+            },
+            "required": ["name"]
+          }
+        },
+        "annotations": { "type": "object" }
+      }
+    },
+    "gateway": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "name": { "type": "string" },
+        "namespace": { "type": "string" },
+        "listener": {
+          "type": "object",
+          "properties": {
+            "port": { "type": "integer" },
+            "protocol": { "type": "string" },
+            "allowedRoutesNamespacesFrom": { "type": "string", "enum": ["All", "Same", "Selector"] }
+          }
+        },
+        "tls": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "secretName": { "type": "string" }
+          }
+        }
+      }
+    },
+    "ingressRoute": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "entryPoints": { "type": "array", "items": { "type": "string" } },
+        "host": { "type": "string" },
+        "tls": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "secretName": { "type": "string" }
+          }
+        },
+        "annotations": { "type": "object" }
+      }
+    },
+    "receivers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "type": { "type": "string", "enum": ["telegram", "discord", "slack", "pagerduty", "webhook"] },
+          "config": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          },
+          "secretKeys": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          }
+        },
+        "required": ["name", "type"]
+      }
+    },
+    "routing": {
+      "type": "object",
+      "properties": {
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "match": {
+                "type": "object",
+                "properties": {
+                  "severity": { "type": "string" },
+                  "cluster_id": { "type": "string" },
+                  "alert_name": { "type": "string" },
+                  "namespace": { "type": "string" }
+                }
+              },
+              "receivers": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": ["name", "receivers"]
+          }
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "anthropicModel": { "type": "string" },
+        "dedupWindowMinutes": { "type": "integer", "minimum": 1 },
+        "grafanaBaseUrl": { "type": "string" },
+        "alertmanagerUrl": { "type": "string" },
+        "alertmanagerSilenceEnabled": { "type": "boolean" },
+        "alertmanagerSilenceDuration": { "type": "string" },
+        "logLevel": { "type": "string", "enum": ["debug", "info", "warn", "error"] }
+      }
+    },
+    "collectors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "clusterId": { "type": "string" },
+          "tokenSecretKey": { "type": "string" }
+        },
+        "required": ["clusterId", "tokenSecretKey"]
+      }
+    },
+    "externalSecrets": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "secretStoreName": { "type": "string" },
+        "secretStoreKind": { "type": "string" },
+        "remoteSecretPath": { "type": "string" },
+        "refreshInterval": { "type": "string" },
+        "collectorTokenKeys": { "type": "array", "items": { "type": "string" } },
+        "receiverSecretKeys": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "devSecrets": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "anthropicApiKey": { "type": "string" },
+        "collectorTokens": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "clusterId": { "type": "string" },
+              "token": { "type": "string" }
+            }
+          }
+        },
+        "receiverSecrets": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "resources": { "type": "object" }
+  }
+}

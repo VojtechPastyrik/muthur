@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "muthur.fullname" . }}-config
+  labels:
+    {{- include "muthur.labels" . | nindent 4 }}
+data:
+  muthur.yaml: |
+    receivers:
+    {{- range .Values.receivers }}
+      - name: {{ .name | quote }}
+        type: {{ .type | quote }}
+        config:
+          {{- range $k, $v := .config }}
+          {{ $k }}: {{ $v | quote }}
+          {{- end }}
+          {{- range $field, $secretKey := .secretKeys }}
+          {{ $field }}_file: {{ printf "/secrets/receivers/%s" $secretKey | quote }}
+          {{- end }}
+    {{- end }}
+    {{- if not .Values.receivers }}
+      []
+    {{- end }}
+    routing:
+      rules:
+      {{- range .Values.routing.rules }}
+        - name: {{ .name | quote }}
+          match:
+            {{- if .match.severity }}
+            severity: {{ .match.severity | quote }}
+            {{- end }}
+            {{- if .match.cluster_id }}
+            cluster_id: {{ .match.cluster_id | quote }}
+            {{- end }}
+            {{- if .match.alert_name }}
+            alert_name: {{ .match.alert_name | quote }}
+            {{- end }}
+            {{- if .match.namespace }}
+            namespace: {{ .match.namespace | quote }}
+            {{- end }}
+          receivers:
+          {{- range .receivers }}
+            - {{ . | quote }}
+          {{- end }}
+          {{- if not .receivers }}
+            []
+          {{- end }}
+      {{- end }}
+      {{- if not .Values.routing.rules }}
+      []
+      {{- end }}

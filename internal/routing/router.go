@@ -1,16 +1,12 @@
 package routing
 
 import (
-	"fmt"
-	"os"
-
 	"go.uber.org/zap"
-	"gopkg.in/yaml.v3"
 
-	pb "github.com/VojtechPastyrik/muthur-central/proto"
+	pb "github.com/VojtechPastyrik/muthur/proto"
 )
 
-type RoutingConfig struct {
+type Config struct {
 	Rules []Rule `yaml:"rules"`
 }
 
@@ -19,37 +15,29 @@ type Router struct {
 	logger *zap.Logger
 }
 
-func NewRouter(configPath string, logger *zap.Logger) (*Router, error) {
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read routing config: %w", err)
-	}
-
-	var cfg RoutingConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse routing config: %w", err)
-	}
-
-	logger.Info("loaded routing rules", zap.Int("count", len(cfg.Rules)))
-	for _, r := range cfg.Rules {
+// New constructs a Router from a pre-parsed list of rules.
+func New(rules []Rule, logger *zap.Logger) *Router {
+	logger.Info("loaded routing rules", zap.Int("count", len(rules)))
+	for _, r := range rules {
 		logger.Info("routing rule",
 			zap.String("name", r.Name),
-			zap.Strings("notify", r.Notify),
+			zap.Strings("receivers", r.Receivers),
 		)
 	}
-
-	return &Router{rules: cfg.Rules, logger: logger}, nil
+	return &Router{rules: rules, logger: logger}
 }
 
+// Route returns the list of receiver names that should handle the given alert.
+// First matching rule wins. Returns nil if no rule matches.
 func (r *Router) Route(payload *pb.AlertPayload) []string {
 	for _, rule := range r.rules {
 		if rule.Matches(payload) {
 			r.logger.Info("matched routing rule",
 				zap.String("rule", rule.Name),
 				zap.String("alert", payload.AlertName),
-				zap.Strings("notify", rule.Notify),
+				zap.Strings("receivers", rule.Receivers),
 			)
-			return rule.Notify
+			return rule.Receivers
 		}
 	}
 

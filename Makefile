@@ -4,13 +4,13 @@ proto:
 	protoc --go_out=. --go_opt=paths=source_relative proto/alert.proto
 
 dev:
-	go run ./cmd/central
+	go run ./cmd/muthur
 
 build:
-	CGO_ENABLED=0 go build -ldflags="-w -s" -trimpath -o bin/central ./cmd/central
+	CGO_ENABLED=0 go build -ldflags="-w -s" -trimpath -o bin/muthur ./cmd/muthur
 
 docker:
-	docker build -t muthur-central:local .
+	docker build -t muthur:local .
 
 lint:
 	golangci-lint run ./...
@@ -19,4 +19,4 @@ test:
 	go test ./... -v -race
 
 helm-lint:
-	helm lint helm/muthur-central
+	helm lint helm/muthur

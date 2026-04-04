@@ -7,7 +7,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: vojtechpastyrik/muthur-central
+  IMAGE_NAME: vojtechpastyrik/muthur
 
 jobs:
   docker:
@@ -74,7 +74,7 @@ jobs:
       - name: Package chart
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          helm package helm/muthur-central --version ${VERSION} --app-version ${VERSION}
+          helm package helm/muthur --version ${VERSION} --app-version ${VERSION}
 
       - name: Clone charts repo
         run: |
@@ -82,7 +82,7 @@ jobs:
 
       - name: Update Helm repo index
         run: |
-          cp muthur-central-*.tgz charts-repo/
+          cp muthur-*.tgz charts-repo/
           cd charts-repo
           if [ -f index.yaml ]; then
             helm repo index . --url https://vojtechpastyrik.github.io/charts --merge index.yaml
@@ -95,6 +95,6 @@ jobs:
           cd charts-repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add index.yaml muthur-central-*.tgz
-          git diff --staged --quiet || git commit -m "muthur-central ${GITHUB_REF_NAME}"
+          git add index.yaml muthur-*.tgz
+          git diff --staged --quiet || git commit -m "muthur ${GITHUB_REF_NAME}"
           git push

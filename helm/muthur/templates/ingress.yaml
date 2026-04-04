@@ -2,9 +2,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "muthur-central.fullname" . }}
+  name: {{ include "muthur.fullname" . }}
   labels:
-    {{- include "muthur-central.labels" . | nindent 4 }}
+    {{- include "muthur.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -27,7 +27,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "muthur-central.fullname" . }}
+                name: {{ include "muthur.fullname" . }}
                 port:
                   number: {{ .Values.service.port }}
 {{- end }}

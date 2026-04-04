@@ -5,8 +5,8 @@ import (
 	"net/url"
 	"strings"
 
-	pb "github.com/VojtechPastyrik/muthur-central/proto"
-	"github.com/VojtechPastyrik/muthur-central/internal/evaluator"
+	pb "github.com/VojtechPastyrik/muthur/proto"
+	"github.com/VojtechPastyrik/muthur/internal/evaluator"
 )
 
 func FormatMessage(payload *pb.AlertPayload, analysis *evaluator.Analysis, grafanaBaseURL string) *Message {

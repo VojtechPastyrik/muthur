@@ -1,13 +1,13 @@
 package routing
 
 import (
-	pb "github.com/VojtechPastyrik/muthur-central/proto"
+	pb "github.com/VojtechPastyrik/muthur/proto"
 )
 
 type Rule struct {
-	Name   string   `yaml:"name" json:"name"`
-	Match  Match    `yaml:"match" json:"match"`
-	Notify []string `yaml:"notify" json:"notify"`
+	Name      string   `yaml:"name" json:"name"`
+	Match     Match    `yaml:"match" json:"match"`
+	Receivers []string `yaml:"receivers" json:"receivers"`
 }
 
 type Match struct {

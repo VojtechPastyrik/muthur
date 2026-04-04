@@ -8,24 +8,21 @@ import (
 	"time"
 )
 
+// Config holds environment-derived settings for the muthur server.
+// Notification receivers are NOT configured here — they are loaded from
+// the config file pointed to by ConfigFile.
 type Config struct {
-	Port                    string
-	LogLevel                string
-	AnthropicAPIKey         string
-	AnthropicModel          string
-	Collectors              []CollectorConfig
-	TelegramToken           string
-	TelegramChatID          string
-	DiscordWebhookURL       string
-	SlackWebhookURL         string
-	PagerDutyRoutingKey     string
-	GenericWebhookURL       string
-	AlertManagerURL         string
-	AlertManagerSilenceOn   bool
-	AlertManagerSilenceDur  time.Duration
-	DedupWindowMinutes      int
-	GrafanaBaseURL          string
-	RoutingRulesFile        string
+	Port                   string
+	LogLevel               string
+	AnthropicAPIKey        string
+	AnthropicModel         string
+	Collectors             []CollectorConfig
+	AlertManagerURL        string
+	AlertManagerSilenceOn  bool
+	AlertManagerSilenceDur time.Duration
+	DedupWindowMinutes     int
+	GrafanaBaseURL         string
+	ConfigFile             string
 }
 
 type CollectorConfig struct {
@@ -48,18 +45,12 @@ func Load() (*Config, error) {
 		LogLevel:               envOr("LOG_LEVEL", "info"),
 		AnthropicAPIKey:        os.Getenv("ANTHROPIC_API_KEY"),
 		AnthropicModel:         envOr("ANTHROPIC_MODEL", "claude-opus-4-5"),
-		TelegramToken:          os.Getenv("TELEGRAM_TOKEN"),
-		TelegramChatID:         os.Getenv("TELEGRAM_CHAT_ID"),
-		DiscordWebhookURL:      os.Getenv("DISCORD_WEBHOOK_URL"),
-		SlackWebhookURL:        os.Getenv("SLACK_WEBHOOK_URL"),
-		PagerDutyRoutingKey:    os.Getenv("PAGERDUTY_ROUTING_KEY"),
-		GenericWebhookURL:      os.Getenv("GENERIC_WEBHOOK_URL"),
 		AlertManagerURL:        envOr("ALERTMANAGER_URL", "http://alertmanager.monitoring.svc:9093"),
 		AlertManagerSilenceOn:  silenceEnabled,
 		AlertManagerSilenceDur: silenceDur,
 		DedupWindowMinutes:     dedupMin,
 		GrafanaBaseURL:         os.Getenv("GRAFANA_BASE_URL"),
-		RoutingRulesFile:       envOr("ROUTING_RULES_FILE", "/config/routing.yaml"),
+		ConfigFile:             envOr("MUTHUR_CONFIG_FILE", "/config/muthur.yaml"),
 	}
 
 	// Load collector tokens from COLLECTOR_TOKENS env (format: "clusterId:token,clusterId:token")

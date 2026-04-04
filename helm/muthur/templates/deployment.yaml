@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "muthur-central.fullname" . }}
+  name: {{ include "muthur.fullname" . }}
   labels:
-    {{- include "muthur-central.labels" . | nindent 4 }}
+    {{- include "muthur.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "muthur-central.selectorLabels" . | nindent 6 }}
+      {{- include "muthur.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
-        {{- include "muthur-central.selectorLabels" . | nindent 8 }}
+        {{- include "muthur.selectorLabels" . | nindent 8 }}
     spec:
       securityContext:
         runAsNonRoot: true
@@ -24,7 +24,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: {{ .Chart.Name }}
-          image: {{ include "muthur-central.image" . }}
+          image: {{ include "muthur.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
@@ -47,9 +47,6 @@ spec:
               port: http
             initialDelaySeconds: 2
             periodSeconds: 5
-          envFrom:
-            - secretRef:
-                name: {{ include "muthur-central.fullname" . }}-secret
           env:
             - name: PORT
               value: "8080"
@@ -67,13 +64,18 @@ spec:
               value: {{ .Values.config.alertmanagerSilenceEnabled | quote }}
             - name: ALERTMANAGER_SILENCE_DURATION
               value: {{ .Values.config.alertmanagerSilenceDuration | quote }}
-            - name: ROUTING_RULES_FILE
-              value: /config/routing.yaml
+            - name: MUTHUR_CONFIG_FILE
+              value: /config/muthur.yaml
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "muthur.fullname" . }}-secret
+                  key: ANTHROPIC_API_KEY
             {{- range .Values.collectors }}
             - name: COLLECTOR_TOKEN_{{ .clusterId | upper | replace "-" "_" }}
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "muthur-central.fullname" $ }}-secret
+                  name: {{ include "muthur.fullname" $ }}-secret
                   key: {{ .tokenSecretKey }}
             {{- end }}
           resources:
@@ -82,7 +84,26 @@ spec:
             - name: config
               mountPath: /config
               readOnly: true
+            {{- if or .Values.externalSecrets.receiverSecretKeys .Values.devSecrets.receiverSecrets }}
+            - name: receiver-secrets
+              mountPath: /secrets/receivers
+              readOnly: true
+            {{- end }}
       volumes:
         - name: config
           configMap:
-            name: {{ include "muthur-central.fullname" . }}-config
+            name: {{ include "muthur.fullname" . }}-config
+        {{- if or .Values.externalSecrets.receiverSecretKeys .Values.devSecrets.receiverSecrets }}
+        - name: receiver-secrets
+          secret:
+            secretName: {{ include "muthur.fullname" . }}-secret
+            items:
+              {{- range .Values.externalSecrets.receiverSecretKeys }}
+              - key: {{ . }}
+                path: {{ . }}
+              {{- end }}
+              {{- range $key, $value := .Values.devSecrets.receiverSecrets }}
+              - key: {{ $key }}
+                path: {{ $key }}
+              {{- end }}
+        {{- end }}

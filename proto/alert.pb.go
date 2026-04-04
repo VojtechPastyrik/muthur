@@ -615,7 +615,7 @@ const file_proto_alert_proto_rawDesc = "" +
 	"\x05phase\x18\b \x01(\tR\x05phase\"1\n" +
 	"\x05Label\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05valueB4Z2github.com/VojtechPastyrik/muthur-central/proto/v1b\x06proto3"
+	"\x05value\x18\x02 \x01(\tR\x05valueB,Z*github.com/VojtechPastyrik/muthur/proto/v1b\x06proto3"
 
 var (
 	file_proto_alert_proto_rawDescOnce sync.Once
