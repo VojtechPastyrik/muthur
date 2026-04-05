@@ -21,7 +21,6 @@ type Config struct {
 	AlertManagerSilenceOn  bool
 	AlertManagerSilenceDur time.Duration
 	DedupWindowMinutes     int
-	GrafanaBaseURL         string
 	ConfigFile             string
 }
 
@@ -49,7 +48,6 @@ func Load() (*Config, error) {
 		AlertManagerSilenceOn:  silenceEnabled,
 		AlertManagerSilenceDur: silenceDur,
 		DedupWindowMinutes:     dedupMin,
-		GrafanaBaseURL:         os.Getenv("GRAFANA_BASE_URL"),
 		ConfigFile:             envOr("MUTHUR_CONFIG_FILE", "/config/muthur.yaml"),
 	}
 

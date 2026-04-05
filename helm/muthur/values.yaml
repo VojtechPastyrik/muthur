@@ -113,7 +113,8 @@ routing:
 config:
   anthropicModel: claude-opus-4-5
   dedupWindowMinutes: 15
-  grafanaBaseUrl: https://grafana.yourdomain.com
+  # Grafana base URL is provided per-alert by the forwarding collector
+  # (see muthur-collector config.grafanaBaseUrl) — there is no global fallback.
   alertmanagerUrl: http://alertmanager.monitoring.svc:9093
   alertmanagerSilenceEnabled: false
   alertmanagerSilenceDuration: 2h

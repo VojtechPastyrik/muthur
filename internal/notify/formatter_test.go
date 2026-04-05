@@ -28,6 +28,7 @@ func TestFormatMessage_StructuredFields(t *testing.T) {
 				MemoryRequest: "64Mi",
 			},
 		},
+		GrafanaBaseUrl: "https://grafana.example.com",
 	}
 
 	analysis := &evaluator.Analysis{
@@ -37,7 +38,7 @@ func TestFormatMessage_StructuredFields(t *testing.T) {
 		Action:    "Increase memory limit to 256Mi",
 	}
 
-	msg := FormatMessage(payload, analysis, "https://grafana.example.com")
+	msg := FormatMessage(payload, analysis)
 
 	if msg.Payload != payload {
 		t.Error("Payload not preserved in Message")
@@ -75,7 +76,7 @@ func TestFormatMessage_Resolved(t *testing.T) {
 		Severity:  "critical",
 		Status:    "resolved",
 	}
-	msg := FormatMessage(payload, nil, "")
+	msg := FormatMessage(payload, nil)
 	if !msg.Resolved() {
 		t.Error("expected Resolved() == true")
 	}
@@ -91,12 +92,12 @@ func TestFormatMessage_NilAnalysisNoGrafanaURL(t *testing.T) {
 		Severity:  "info",
 	}
 
-	msg := FormatMessage(payload, nil, "")
+	msg := FormatMessage(payload, nil)
 	if msg.Analysis != nil {
 		t.Error("Analysis should be nil")
 	}
 	if msg.GrafanaURL != "" {
-		t.Errorf("GrafanaURL should be empty without base URL, got %q", msg.GrafanaURL)
+		t.Errorf("GrafanaURL should be empty without collector-provided base URL, got %q", msg.GrafanaURL)
 	}
 	if msg.Severity() != "info" {
 		t.Errorf("expected info severity, got %q", msg.Severity())

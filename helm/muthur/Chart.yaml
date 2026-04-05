@@ -2,8 +2,8 @@ apiVersion: v2
 name: muthur
 description: AI-powered Kubernetes monitoring central agent
 type: application
-version: 0.1.2
-appVersion: "0.1.2"
+version: 0.1.4
+appVersion: "0.1.4"
 kubeVersion: ">=1.24.0-0"
 home: https://github.com/VojtechPastyrik/muthur
 sources:

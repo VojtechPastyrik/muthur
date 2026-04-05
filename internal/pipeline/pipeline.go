@@ -20,7 +20,6 @@ type Pipeline struct {
 	router    *routing.Router
 	notifiers map[string]notify.Notifier
 	silence   *silence.Client
-	grafanaURL string
 	logger    *zap.Logger
 }
 
@@ -30,17 +29,15 @@ func New(
 	router *routing.Router,
 	notifiers map[string]notify.Notifier,
 	silence *silence.Client,
-	grafanaURL string,
 	logger *zap.Logger,
 ) *Pipeline {
 	return &Pipeline{
-		dedup:      dedup,
-		evaluator:  eval,
-		router:     router,
-		notifiers:  notifiers,
-		silence:    silence,
-		grafanaURL: grafanaURL,
-		logger:     logger,
+		dedup:     dedup,
+		evaluator: eval,
+		router:    router,
+		notifiers: notifiers,
+		silence:   silence,
+		logger:    logger,
 	}
 }
 
@@ -84,7 +81,7 @@ func (p *Pipeline) Process(payload *pb.AlertPayload) {
 		return
 	}
 
-	msg := notify.FormatMessage(payload, analysis, p.grafanaURL)
+	msg := notify.FormatMessage(payload, analysis)
 
 	for _, name := range targets {
 		notifier, ok := p.notifiers[name]

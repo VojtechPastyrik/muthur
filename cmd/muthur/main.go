@@ -84,7 +84,7 @@ func run() error {
 	)
 
 	// Pipeline
-	pipe := pipeline.New(dd, eval, router, notifiers, silenceClient, cfg.GrafanaBaseURL, logger)
+	pipe := pipeline.New(dd, eval, router, notifiers, silenceClient, logger)
 
 	// HTTP server
 	r := chi.NewRouter()

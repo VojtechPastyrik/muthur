@@ -9,19 +9,20 @@ import (
 	pb "github.com/VojtechPastyrik/muthur/proto"
 )
 
-// FormatMessage wraps the payload, analysis, and grafana URL into a Message.
-// Per-channel rendering is each notifier's responsibility — Discord uses
-// embeds, Telegram uses HTML, Slack uses Block Kit attachments, etc.
-func FormatMessage(payload *pb.AlertPayload, analysis *evaluator.Analysis, grafanaBaseURL string) *Message {
+// FormatMessage wraps the payload and analysis into a Message. The Grafana
+// deep link is built from payload.GrafanaBaseUrl — this is provided by the
+// collector so each cluster points to its own Grafana instance. When the
+// collector omits it, notifications contain no Grafana link.
+func FormatMessage(payload *pb.AlertPayload, analysis *evaluator.Analysis) *Message {
 	return &Message{
 		Payload:    payload,
 		Analysis:   analysis,
-		GrafanaURL: buildGrafanaURL(grafanaBaseURL, payload),
+		GrafanaURL: buildGrafanaURL(payload),
 	}
 }
 
-func buildGrafanaURL(baseURL string, payload *pb.AlertPayload) string {
-	if baseURL == "" || payload == nil {
+func buildGrafanaURL(payload *pb.AlertPayload) string {
+	if payload == nil || payload.GrafanaBaseUrl == "" {
 		return ""
 	}
 
@@ -30,7 +31,7 @@ func buildGrafanaURL(baseURL string, payload *pb.AlertPayload) string {
 	params.Set("left", fmt.Sprintf(`["now-1h","now","Loki",{"expr":"{namespace=\"%s\", pod=\"%s\"}"}]`,
 		payload.Namespace, payload.PodName))
 
-	return fmt.Sprintf("%s/explore?%s", strings.TrimRight(baseURL, "/"), params.Encode())
+	return fmt.Sprintf("%s/explore?%s", strings.TrimRight(payload.GrafanaBaseUrl, "/"), params.Encode())
 }
 
 // targetLine returns a short "pod / name" or "deployment / name" string,
