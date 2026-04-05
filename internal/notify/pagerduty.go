@@ -38,36 +38,7 @@ func newPagerDuty(name string, cfg map[string]string) (Notifier, error) {
 func (p *PagerDuty) Name() string { return p.name }
 
 func (p *PagerDuty) Send(ctx context.Context, msg *Message) error {
-	severity := msg.Severity
-	switch severity {
-	case "critical":
-		severity = "critical"
-	case "warning":
-		severity = "warning"
-	default:
-		severity = "info"
-	}
-
-	event := map[string]any{
-		"routing_key":  p.routingKey,
-		"event_action": "trigger",
-		"dedup_key":    fmt.Sprintf("%s-%s-%s", msg.ClusterID, msg.AlertName, msg.Namespace),
-		"payload": map[string]any{
-			"summary":  msg.Text,
-			"source":   msg.ClusterID,
-			"severity": severity,
-			"group":    msg.ClusterID,
-			"class":    msg.AlertName,
-			"custom_details": map[string]string{
-				"namespace": msg.Namespace,
-				"pod":       msg.PodName,
-				"grafana":   msg.GrafanaURL,
-			},
-		},
-		"links": []map[string]string{
-			{"href": msg.GrafanaURL, "text": "Grafana"},
-		},
-	}
+	event := buildPagerDutyEvent(p.routingKey, msg)
 
 	data, err := json.Marshal(event)
 	if err != nil {
@@ -92,4 +63,113 @@ func (p *PagerDuty) Send(ctx context.Context, msg *Message) error {
 	}
 
 	return nil
+}
+
+func buildPagerDutyEvent(routingKey string, msg *Message) map[string]any {
+	p := msg.Payload
+	dedupKey := fmt.Sprintf("muthur-%s-%s-%s",
+		safeField(p, "cluster"),
+		safeField(p, "alert"),
+		safeField(p, "namespace"),
+	)
+
+	// Resolve events need only routing_key, event_action, and dedup_key —
+	// everything else is ignored by the Events API v2.
+	if msg.Resolved() {
+		return map[string]any{
+			"routing_key":  routingKey,
+			"event_action": "resolve",
+			"dedup_key":    dedupKey,
+		}
+	}
+
+	severity := msg.Severity()
+	if severity != "critical" && severity != "warning" && severity != "info" {
+		severity = "info"
+	}
+
+	summary := ""
+	if p != nil {
+		summary = p.AlertName
+		if p.Summary != "" {
+			summary = p.AlertName + ": " + p.Summary
+		}
+	}
+	summary = truncate(summary, 1024) // Events API v2 summary cap
+
+	customDetails := map[string]any{}
+	if p != nil {
+		customDetails["namespace"] = p.Namespace
+		customDetails["pod"] = p.PodName
+		customDetails["target"] = targetLine(p)
+		customDetails["fired_at"] = time.Unix(p.FiredAt, 0).UTC().Format(time.RFC3339)
+		if p.Description != "" {
+			customDetails["description"] = p.Description
+		}
+	}
+	if msg.Analysis != nil {
+		customDetails["root_cause"] = msg.Analysis.RootCause
+		customDetails["evidence"] = msg.Analysis.Evidence
+		customDetails["recommended_action"] = msg.Analysis.Action
+	}
+	if msg.GrafanaURL != "" {
+		customDetails["grafana"] = msg.GrafanaURL
+	}
+
+	event := map[string]any{
+		"routing_key":  routingKey,
+		"event_action": "trigger",
+		"dedup_key":    dedupKey,
+		"payload": map[string]any{
+			"summary":        summary,
+			"source":         safeField(p, "cluster"),
+			"severity":       severity,
+			"component":      safeField(p, "pod"),
+			"group":          safeField(p, "namespace"),
+			"class":          safeField(p, "alert"),
+			"custom_details": customDetails,
+		},
+	}
+	if p != nil && p.FiredAt > 0 {
+		event["payload"].(map[string]any)["timestamp"] =
+			time.Unix(p.FiredAt, 0).UTC().Format(time.RFC3339)
+	}
+	if msg.GrafanaURL != "" {
+		event["links"] = []map[string]string{
+			{"href": msg.GrafanaURL, "text": "Grafana"},
+		}
+	}
+	return event
+}
+
+func safeField(p any, which string) string {
+	type payload interface {
+		GetClusterId() string
+		GetAlertName() string
+		GetNamespace() string
+		GetPodName() string
+	}
+	pp, ok := p.(payload)
+	if !ok || pp == nil {
+		return "unknown"
+	}
+	switch which {
+	case "cluster":
+		if v := pp.GetClusterId(); v != "" {
+			return v
+		}
+	case "alert":
+		if v := pp.GetAlertName(); v != "" {
+			return v
+		}
+	case "namespace":
+		if v := pp.GetNamespace(); v != "" {
+			return v
+		}
+	case "pod":
+		if v := pp.GetPodName(); v != "" {
+			return v
+		}
+	}
+	return "unknown"
 }

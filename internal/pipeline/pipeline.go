@@ -45,28 +45,37 @@ func New(
 }
 
 func (p *Pipeline) Process(payload *pb.AlertPayload) {
-	if p.dedup.IsDuplicate(payload) {
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	analysis, err := p.evaluator.Evaluate(ctx, payload)
-	if err != nil {
-		p.logger.Error("evaluation failed",
-			zap.String("alert", payload.AlertName),
-			zap.Error(err),
-		)
-		// continue with nil analysis — still send notifications
-	}
+	resolved := payload.Status == "resolved"
 
-	if analysis != nil && analysis.Silence {
-		if err := p.silence.CreateSilence(ctx, payload, analysis.SilenceReason); err != nil {
-			p.logger.Error("failed to create silence",
+	// Resolved alerts bypass Claude (nothing to analyse) and dedup (the
+	// dedup window tracks firing alerts; a resolved notification should
+	// always be delivered to close the loop visually on the receiver side).
+	var analysis *evaluator.Analysis
+	if !resolved {
+		if p.dedup.IsDuplicate(payload) {
+			return
+		}
+
+		var err error
+		analysis, err = p.evaluator.Evaluate(ctx, payload)
+		if err != nil {
+			p.logger.Error("evaluation failed",
 				zap.String("alert", payload.AlertName),
 				zap.Error(err),
 			)
+			// continue with nil analysis — still send notifications
+		}
+
+		if analysis != nil && analysis.Silence {
+			if err := p.silence.CreateSilence(ctx, payload, analysis.SilenceReason); err != nil {
+				p.logger.Error("failed to create silence",
+					zap.String("alert", payload.AlertName),
+					zap.Error(err),
+				)
+			}
 		}
 	}
 

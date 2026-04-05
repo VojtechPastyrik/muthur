@@ -71,9 +71,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		zap.String("alert_name", payload.AlertName),
 		zap.String("severity", payload.Severity),
 		zap.String("namespace", payload.Namespace),
+		zap.String("status", payload.Status),
 	)
 
-	h.processor.Process(&payload)
+	// Process asynchronously — pipeline contains a Claude call that routinely
+	// takes 5-15s and we don't want to hold the collector's HTTP connection
+	// (which itself is forwarded via an AlertManager webhook with a short
+	// timeout). Caller gets 202 Accepted immediately.
+	go h.processor.Process(&payload)
 
 	w.WriteHeader(http.StatusAccepted)
 }

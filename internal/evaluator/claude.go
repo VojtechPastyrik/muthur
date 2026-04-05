@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -86,10 +87,33 @@ func (e *Evaluator) call(ctx context.Context, prompt string) (*Analysis, error) 
 		return nil, fmt.Errorf("no text content in Claude response")
 	}
 
+	cleaned := stripJSONFences(text)
+
 	var analysis Analysis
-	if err := json.Unmarshal([]byte(text), &analysis); err != nil {
+	if err := json.Unmarshal([]byte(cleaned), &analysis); err != nil {
 		return nil, fmt.Errorf("failed to parse Claude response as JSON: %w (raw: %s)", err, text)
 	}
 
 	return &analysis, nil
+}
+
+// stripJSONFences removes markdown code fences (```json ... ``` or ``` ... ```)
+// that Claude sometimes wraps around JSON output despite being told not to.
+// Safe no-op when the text is already bare JSON.
+func stripJSONFences(text string) string {
+	s := strings.TrimSpace(text)
+	if !strings.HasPrefix(s, "```") {
+		return s
+	}
+	// Drop opening fence line (```json, ```JSON, ``` etc.)
+	if nl := strings.IndexByte(s, '\n'); nl >= 0 {
+		s = s[nl+1:]
+	} else {
+		s = strings.TrimPrefix(s, "```")
+	}
+	// Drop closing fence
+	if idx := strings.LastIndex(s, "```"); idx >= 0 {
+		s = s[:idx]
+	}
+	return strings.TrimSpace(s)
 }

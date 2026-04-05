@@ -8,7 +8,7 @@ import (
 	pb "github.com/VojtechPastyrik/muthur/proto"
 )
 
-func TestFormatMessage_FullPayload(t *testing.T) {
+func TestFormatMessage_StructuredFields(t *testing.T) {
 	payload := &pb.AlertPayload{
 		ClusterId: "cluster-a",
 		AlertName: "HighMemory",
@@ -39,49 +39,52 @@ func TestFormatMessage_FullPayload(t *testing.T) {
 
 	msg := FormatMessage(payload, analysis, "https://grafana.example.com")
 
-	checks := []string{
-		"[CRITICAL]",
-		"cluster-a",
-		"HighMemory",
-		"pod / app-123",
-		"Node:     node-01",
-		"Restarts: 3",
-		"OOM killer terminated the pod",
-		"Memory usage reached 128Mi limit",
-		"Increase memory limit to 256Mi",
-		"grafana.example.com",
+	if msg.Payload != payload {
+		t.Error("Payload not preserved in Message")
 	}
-
-	for _, check := range checks {
-		if !strings.Contains(msg.Text, check) {
-			t.Errorf("message missing: %q", check)
-		}
+	if msg.Analysis != analysis {
+		t.Error("Analysis not preserved in Message")
+	}
+	if !strings.Contains(msg.GrafanaURL, "grafana.example.com") {
+		t.Errorf("expected grafana URL, got %q", msg.GrafanaURL)
+	}
+	if !strings.Contains(msg.GrafanaURL, "app-123") {
+		t.Errorf("expected pod name in grafana URL, got %q", msg.GrafanaURL)
+	}
+	if msg.Severity() != "critical" {
+		t.Errorf("expected critical severity, got %q", msg.Severity())
+	}
+	if msg.Title() != "[CRITICAL] cluster-a / HighMemory" {
+		t.Errorf("unexpected title: %q", msg.Title())
+	}
+	if msg.Resolved() {
+		t.Error("message should not be marked resolved")
+	}
+	if tl := targetLine(payload); tl != "pod / app-123" {
+		t.Errorf("unexpected target line: %q", tl)
+	}
+	if r := restartInfo(payload); r != "3 restarts" {
+		t.Errorf("unexpected restart info: %q", r)
 	}
 }
 
-func TestFormatMessage_NoEmoji(t *testing.T) {
+func TestFormatMessage_Resolved(t *testing.T) {
 	payload := &pb.AlertPayload{
 		ClusterId: "cluster-a",
-		AlertName: "Test",
-		Severity:  "warning",
+		AlertName: "HighMemory",
+		Severity:  "critical",
+		Status:    "resolved",
 	}
-	analysis := &evaluator.Analysis{
-		RootCause: "test",
-		Evidence:  "test",
-		Action:    "test",
+	msg := FormatMessage(payload, nil, "")
+	if !msg.Resolved() {
+		t.Error("expected Resolved() == true")
 	}
-
-	msg := FormatMessage(payload, analysis, "")
-
-	emojis := []string{"🔴", "🟡", "🟢", "⚠️", "❌", "✅", "🚨", "💀"}
-	for _, e := range emojis {
-		if strings.Contains(msg.Text, e) {
-			t.Errorf("message should not contain emoji: %s", e)
-		}
+	if msg.Title() != "[RESOLVED] cluster-a / HighMemory" {
+		t.Errorf("unexpected resolved title: %q", msg.Title())
 	}
 }
 
-func TestFormatMessage_NilAnalysis(t *testing.T) {
+func TestFormatMessage_NilAnalysisNoGrafanaURL(t *testing.T) {
 	payload := &pb.AlertPayload{
 		ClusterId: "cluster-a",
 		AlertName: "Test",
@@ -89,11 +92,13 @@ func TestFormatMessage_NilAnalysis(t *testing.T) {
 	}
 
 	msg := FormatMessage(payload, nil, "")
-
-	if !strings.Contains(msg.Text, "[INFO]") {
-		t.Error("message should contain severity")
+	if msg.Analysis != nil {
+		t.Error("Analysis should be nil")
 	}
-	if strings.Contains(msg.Text, "Root cause") {
-		t.Error("should not have root cause with nil analysis")
+	if msg.GrafanaURL != "" {
+		t.Errorf("GrafanaURL should be empty without base URL, got %q", msg.GrafanaURL)
+	}
+	if msg.Severity() != "info" {
+		t.Errorf("expected info severity, got %q", msg.Severity())
 	}
 }

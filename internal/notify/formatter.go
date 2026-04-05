@@ -5,67 +5,23 @@ import (
 	"net/url"
 	"strings"
 
-	pb "github.com/VojtechPastyrik/muthur/proto"
 	"github.com/VojtechPastyrik/muthur/internal/evaluator"
+	pb "github.com/VojtechPastyrik/muthur/proto"
 )
 
+// FormatMessage wraps the payload, analysis, and grafana URL into a Message.
+// Per-channel rendering is each notifier's responsibility — Discord uses
+// embeds, Telegram uses HTML, Slack uses Block Kit attachments, etc.
 func FormatMessage(payload *pb.AlertPayload, analysis *evaluator.Analysis, grafanaBaseURL string) *Message {
-	var b strings.Builder
-
-	severity := strings.ToUpper(payload.Severity)
-	b.WriteString(fmt.Sprintf("[%s] %s / %s\n\n", severity, payload.ClusterId, payload.AlertName))
-
-	if payload.Target != nil {
-		t := payload.Target
-		b.WriteString(fmt.Sprintf("Target:   %s", t.TargetType))
-		if t.PodName != "" {
-			b.WriteString(fmt.Sprintf(" / %s", t.PodName))
-		}
-		if t.Deployment != "" {
-			b.WriteString(fmt.Sprintf(" / %s", t.Deployment))
-		}
-		b.WriteString("\n")
-		if t.Node != "" {
-			b.WriteString(fmt.Sprintf("Node:     %s\n", t.Node))
-		}
-	}
-
-	for _, pm := range payload.PodMetas {
-		if pm.RestartCount > 0 {
-			b.WriteString(fmt.Sprintf("Restarts: %d\n", pm.RestartCount))
-		}
-		if pm.MemoryLimit != "" {
-			b.WriteString(fmt.Sprintf("Memory:   request=%s limit=%s\n", pm.MemoryRequest, pm.MemoryLimit))
-		}
-		break // only show first pod's meta in summary
-	}
-
-	if analysis != nil {
-		b.WriteString(fmt.Sprintf("\nRoot cause: %s\n", analysis.RootCause))
-		b.WriteString(fmt.Sprintf("\nEvidence: %s\n", analysis.Evidence))
-		b.WriteString(fmt.Sprintf("\nAction: %s\n", analysis.Action))
-	}
-
-	grafanaURL := buildGrafanaURL(grafanaBaseURL, payload)
-	if grafanaURL != "" {
-		b.WriteString(fmt.Sprintf("\nGrafana: %s\n", grafanaURL))
-	}
-
 	return &Message{
-		Text:       b.String(),
-		Severity:   payload.Severity,
-		ClusterID:  payload.ClusterId,
-		AlertName:  payload.AlertName,
-		Namespace:  payload.Namespace,
-		PodName:    payload.PodName,
-		GrafanaURL: grafanaURL,
 		Payload:    payload,
 		Analysis:   analysis,
+		GrafanaURL: buildGrafanaURL(grafanaBaseURL, payload),
 	}
 }
 
 func buildGrafanaURL(baseURL string, payload *pb.AlertPayload) string {
-	if baseURL == "" {
+	if baseURL == "" || payload == nil {
 		return ""
 	}
 
@@ -75,4 +31,41 @@ func buildGrafanaURL(baseURL string, payload *pb.AlertPayload) string {
 		payload.Namespace, payload.PodName))
 
 	return fmt.Sprintf("%s/explore?%s", strings.TrimRight(baseURL, "/"), params.Encode())
+}
+
+// targetLine returns a short "pod / name" or "deployment / name" string,
+// empty when nothing useful is set.
+func targetLine(payload *pb.AlertPayload) string {
+	if payload == nil || payload.Target == nil {
+		return ""
+	}
+	t := payload.Target
+	line := t.TargetType
+	switch {
+	case t.PodName != "":
+		line += " / " + t.PodName
+	case t.Deployment != "":
+		line += " / " + t.Deployment
+	case t.Daemonset != "":
+		line += " / " + t.Daemonset
+	case t.Node != "":
+		line += " / " + t.Node
+	case t.Pvc != "":
+		line += " / " + t.Pvc
+	}
+	return line
+}
+
+// restartInfo returns a short string like "3 restarts" when a pod has been
+// restarting, otherwise empty.
+func restartInfo(payload *pb.AlertPayload) string {
+	if payload == nil {
+		return ""
+	}
+	for _, pm := range payload.PodMetas {
+		if pm.RestartCount > 0 {
+			return fmt.Sprintf("%d restarts", pm.RestartCount)
+		}
+	}
+	return ""
 }

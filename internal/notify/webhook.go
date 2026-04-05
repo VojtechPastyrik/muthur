@@ -29,20 +29,31 @@ func newWebhook(name string, cfg map[string]string) (Notifier, error) {
 
 func (w *Webhook) Name() string { return w.name }
 
-func (w *Webhook) Send(ctx context.Context, msg *Message) error {
-	body := map[string]any{
-		"text":       msg.Text,
-		"severity":   msg.Severity,
-		"cluster_id": msg.ClusterID,
-		"alert_name": msg.AlertName,
-		"namespace":  msg.Namespace,
-		"pod_name":   msg.PodName,
-		"grafana":    msg.GrafanaURL,
-	}
+type webhookPayload struct {
+	Status      string         `json:"status"`
+	Severity    string         `json:"severity"`
+	ClusterID   string         `json:"cluster_id"`
+	AlertName   string         `json:"alert_name"`
+	Namespace   string         `json:"namespace"`
+	Pod         string         `json:"pod,omitempty"`
+	Target      string         `json:"target,omitempty"`
+	Summary     string         `json:"summary,omitempty"`
+	Description string         `json:"description,omitempty"`
+	FiredAt     string         `json:"fired_at,omitempty"`
+	GrafanaURL  string         `json:"grafana_url,omitempty"`
+	Analysis    *webhookAI     `json:"analysis,omitempty"`
+	Labels      map[string]any `json:"labels,omitempty"`
+}
 
-	if msg.Analysis != nil {
-		body["analysis"] = msg.Analysis
-	}
+type webhookAI struct {
+	RootCause string `json:"root_cause,omitempty"`
+	Evidence  string `json:"evidence,omitempty"`
+	Action    string `json:"action,omitempty"`
+	Silence   bool   `json:"silence,omitempty"`
+}
+
+func (w *Webhook) Send(ctx context.Context, msg *Message) error {
+	body := buildWebhookPayload(msg)
 
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -66,4 +77,42 @@ func (w *Webhook) Send(ctx context.Context, msg *Message) error {
 	}
 
 	return nil
+}
+
+func buildWebhookPayload(msg *Message) webhookPayload {
+	wp := webhookPayload{
+		Status:     "firing",
+		Severity:   msg.Severity(),
+		GrafanaURL: msg.GrafanaURL,
+	}
+	if msg.Resolved() {
+		wp.Status = "resolved"
+	}
+	if p := msg.Payload; p != nil {
+		wp.ClusterID = p.ClusterId
+		wp.AlertName = p.AlertName
+		wp.Namespace = p.Namespace
+		wp.Pod = p.PodName
+		wp.Target = targetLine(p)
+		wp.Summary = p.Summary
+		wp.Description = p.Description
+		if p.FiredAt > 0 {
+			wp.FiredAt = time.Unix(p.FiredAt, 0).UTC().Format(time.RFC3339)
+		}
+		if len(p.Labels) > 0 {
+			wp.Labels = make(map[string]any, len(p.Labels))
+			for _, l := range p.Labels {
+				wp.Labels[l.Name] = l.Value
+			}
+		}
+	}
+	if msg.Analysis != nil {
+		wp.Analysis = &webhookAI{
+			RootCause: msg.Analysis.RootCause,
+			Evidence:  msg.Analysis.Evidence,
+			Action:    msg.Analysis.Action,
+			Silence:   msg.Analysis.Silence,
+		}
+	}
+	return wp
 }
