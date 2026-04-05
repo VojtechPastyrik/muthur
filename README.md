@@ -8,17 +8,25 @@ AI-powered Kubernetes monitoring server. Named after MU/TH/UR 6000 from Alien.
 
 Receives enriched alert payloads from [muthur-collector](https://github.com/VojtechPastyrik/muthur-collector) instances, evaluates them with Claude, deduplicates, and routes notifications to configured receivers.
 
-```
-Cluster A              Cluster B              Cluster C
-muthur-collector       muthur-collector       muthur-collector
-     |                      |                      |
-     +----------+-----------+----------+-----------+
-                |                      |
-                v                      v
-              muthur (home cluster)
-               POST /ingest
-               Claude evaluation
-               Routing → Receivers
+```mermaid
+flowchart TD
+    subgraph Clusters
+        A[muthur-collector<br/>Cluster A]
+        B[muthur-collector<br/>Cluster B]
+        C[muthur-collector<br/>Cluster C]
+    end
+
+    M[muthur<br/>home cluster<br/>POST /ingest → Claude → routing]
+
+    A --> M
+    B --> M
+    C --> M
+
+    M --> D[Discord]
+    M --> T[Telegram]
+    M --> S[Slack]
+    M --> P[PagerDuty]
+    M --> W[Webhook]
 ```
 
 ## Features
