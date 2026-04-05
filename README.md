@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://assets.pastyrik.dev/images/muthur.png" width="200" alt="muthur">
+</p>
+
 # muthur
 
 AI-powered Kubernetes monitoring server. Named after MU/TH/UR 6000 from Alien.
