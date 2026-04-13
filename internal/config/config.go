@@ -21,6 +21,8 @@ type Config struct {
 	AlertManagerSilenceOn  bool
 	AlertManagerSilenceDur time.Duration
 	DedupWindowMinutes     int
+	LLMCacheEnabled        bool
+	LLMCacheTTLMinutes     int
 	ConfigFile             string
 }
 
@@ -31,6 +33,8 @@ type CollectorConfig struct {
 
 func Load() (*Config, error) {
 	dedupMin, _ := strconv.Atoi(envOr("DEDUP_WINDOW_MINUTES", "15"))
+	cacheTTL, _ := strconv.Atoi(envOr("LLM_CACHE_TTL_MINUTES", "30"))
+	cacheEnabled, _ := strconv.ParseBool(envOr("LLM_CACHE_ENABLED", "true"))
 
 	silenceDur, err := time.ParseDuration(envOr("ALERTMANAGER_SILENCE_DURATION", "2h"))
 	if err != nil {
@@ -48,6 +52,8 @@ func Load() (*Config, error) {
 		AlertManagerSilenceOn:  silenceEnabled,
 		AlertManagerSilenceDur: silenceDur,
 		DedupWindowMinutes:     dedupMin,
+		LLMCacheEnabled:        cacheEnabled,
+		LLMCacheTTLMinutes:     cacheTTL,
 		ConfigFile:             envOr("MUTHUR_CONFIG_FILE", "/config/muthur.yaml"),
 	}
 

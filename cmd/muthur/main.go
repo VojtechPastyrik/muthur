@@ -15,6 +15,7 @@ import (
 	"github.com/VojtechPastyrik/muthur/internal/dedup"
 	"github.com/VojtechPastyrik/muthur/internal/evaluator"
 	"github.com/VojtechPastyrik/muthur/internal/ingest"
+	"github.com/VojtechPastyrik/muthur/internal/llmcache"
 	"github.com/VojtechPastyrik/muthur/internal/notify"
 	"github.com/VojtechPastyrik/muthur/internal/pipeline"
 	"github.com/VojtechPastyrik/muthur/internal/routing"
@@ -72,6 +73,9 @@ func run() error {
 	// Dedup
 	dd := dedup.New(cfg.DedupWindowMinutes, logger)
 
+	// LLM response cache
+	cache := llmcache.New(cfg.LLMCacheEnabled, cfg.LLMCacheTTLMinutes, logger)
+
 	// Router
 	router := routing.New(fileCfg.Routing.Rules, logger)
 
@@ -84,7 +88,7 @@ func run() error {
 	)
 
 	// Pipeline
-	pipe := pipeline.New(dd, eval, router, notifiers, silenceClient, logger)
+	pipe := pipeline.New(dd, eval, cache, router, notifiers, silenceClient, logger)
 
 	// HTTP server
 	r := chi.NewRouter()

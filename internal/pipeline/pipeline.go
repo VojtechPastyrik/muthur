@@ -8,6 +8,7 @@ import (
 
 	"github.com/VojtechPastyrik/muthur/internal/dedup"
 	"github.com/VojtechPastyrik/muthur/internal/evaluator"
+	"github.com/VojtechPastyrik/muthur/internal/llmcache"
 	"github.com/VojtechPastyrik/muthur/internal/notify"
 	"github.com/VojtechPastyrik/muthur/internal/routing"
 	"github.com/VojtechPastyrik/muthur/internal/silence"
@@ -17,6 +18,7 @@ import (
 type Pipeline struct {
 	dedup     *dedup.Deduplicator
 	evaluator *evaluator.Evaluator
+	cache     *llmcache.Cache
 	router    *routing.Router
 	notifiers map[string]notify.Notifier
 	silence   *silence.Client
@@ -26,6 +28,7 @@ type Pipeline struct {
 func New(
 	dedup *dedup.Deduplicator,
 	eval *evaluator.Evaluator,
+	cache *llmcache.Cache,
 	router *routing.Router,
 	notifiers map[string]notify.Notifier,
 	silence *silence.Client,
@@ -34,6 +37,7 @@ func New(
 	return &Pipeline{
 		dedup:     dedup,
 		evaluator: eval,
+		cache:     cache,
 		router:    router,
 		notifiers: notifiers,
 		silence:   silence,
@@ -56,14 +60,20 @@ func (p *Pipeline) Process(payload *pb.AlertPayload) {
 			return
 		}
 
-		var err error
-		analysis, err = p.evaluator.Evaluate(ctx, payload)
-		if err != nil {
-			p.logger.Error("evaluation failed",
-				zap.String("alert", payload.AlertName),
-				zap.Error(err),
-			)
-			// continue with nil analysis — still send notifications
+		if cached, ok := p.cache.Get(payload); ok {
+			analysis = cached
+		} else {
+			var err error
+			analysis, err = p.evaluator.Evaluate(ctx, payload)
+			if err != nil {
+				p.logger.Error("evaluation failed",
+					zap.String("alert", payload.AlertName),
+					zap.Error(err),
+				)
+				// continue with nil analysis — still send notifications
+			} else {
+				p.cache.Set(payload, analysis)
+			}
 		}
 
 		if analysis != nil && analysis.Silence {
