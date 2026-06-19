@@ -8,19 +8,74 @@ import (
 	pb "github.com/VojtechPastyrik/muthur/proto"
 )
 
-func buildPrompt(payload *pb.AlertPayload) string {
+const promptIntro = `You are a Kubernetes monitoring AI. Analyse the alert data below and report your verdict by calling the report_analysis tool.
+
+Rules:
+- Base conclusions only on the provided data.
+- Identify metric trends (rising, stable, sudden spike) and relate them to the alert timeline.
+- Logs are already redacted — never attempt to reconstruct original values.
+- Call report_analysis exactly once.
+`
+
+const incidentIntro = `You are a Kubernetes monitoring AI. The following alerts fired close together in the same cluster and are likely facets of ONE incident. Analyse them together and report a single unified verdict by calling the report_analysis tool.
+
+Rules:
+- Identify the single underlying root cause that best explains the whole group, not each alert in isolation.
+- If one alert is the trigger and the others are cascading effects, say so in root_cause and evidence.
+- Base conclusions only on the provided data. Logs are already redacted.
+- Set severity to the highest warranted by the group.
+- Call report_analysis exactly once.
+`
+
+// buildPrompt renders the single-alert prompt.
+func buildPrompt(payload *pb.AlertPayload, examples []Example) string {
 	var b strings.Builder
+	b.WriteString(promptIntro)
+	writeExamples(&b, examples)
+	b.WriteString("\n=== Alert ===\n")
+	renderAlert(&b, payload)
+	return b.String()
+}
 
-	b.WriteString("You are a Kubernetes monitoring AI. Analyse the following alert and return ONLY a JSON object.\n\n")
-	b.WriteString("Required JSON format:\n")
-	b.WriteString(`{"severity":"critical|warning|info","root_cause":"one sentence based on logs and metrics","evidence":"specific log lines or metric trends supporting this","action":"recommended immediate action","silence":false,"silence_reason":"only if silence=true"}`)
-	b.WriteString("\n\n")
-	b.WriteString("Rules:\n")
-	b.WriteString("- Base conclusions only on provided data\n")
-	b.WriteString("- Identify metric trends (rising, stable, sudden spike) and relate to alert timeline\n")
-	b.WriteString("- Logs are already redacted — never attempt to reconstruct original values\n")
-	b.WriteString("- Return only JSON, nothing before or after\n\n")
+// buildIncidentPrompt renders the multi-alert (correlated incident) prompt.
+func buildIncidentPrompt(payloads []*pb.AlertPayload, examples []Example) string {
+	var b strings.Builder
+	b.WriteString(incidentIntro)
+	writeExamples(&b, examples)
+	b.WriteString(fmt.Sprintf("\n=== Incident: %d correlated alerts ===\n", len(payloads)))
+	for i, p := range payloads {
+		b.WriteString(fmt.Sprintf("\n--- Alert %d of %d ---\n", i+1, len(payloads)))
+		renderAlert(&b, p)
+	}
+	return b.String()
+}
 
+// writeExamples injects past analyses with operator verdicts as a few-shot
+// signal. "wrong" examples steer the model away from a prior mistake; "useful"
+// examples reinforce a good pattern. This is how the feedback loop closes.
+func writeExamples(b *strings.Builder, examples []Example) {
+	if len(examples) == 0 {
+		return
+	}
+	b.WriteString("\n=== Operator feedback on past analyses (learn from these) ===\n")
+	for _, ex := range examples {
+		if ex.Analysis == nil {
+			continue
+		}
+		switch ex.Verdict {
+		case "wrong":
+			b.WriteString(fmt.Sprintf("- For alert %q, operators marked this root cause as WRONG: %q. Avoid this mistake.\n",
+				ex.AlertName, ex.Analysis.RootCause))
+		case "useful":
+			b.WriteString(fmt.Sprintf("- For alert %q, operators confirmed this root cause as correct: %q.\n",
+				ex.AlertName, ex.Analysis.RootCause))
+		}
+	}
+}
+
+// renderAlert writes one alert's data block. Shared by the single-alert and
+// incident prompts.
+func renderAlert(b *strings.Builder, payload *pb.AlertPayload) {
 	b.WriteString(fmt.Sprintf("Cluster: %s\n", payload.ClusterId))
 	b.WriteString(fmt.Sprintf("Alert: %s\n", payload.AlertName))
 	b.WriteString(fmt.Sprintf("Severity: %s\n", payload.Severity))
@@ -36,7 +91,7 @@ func buildPrompt(payload *pb.AlertPayload) string {
 
 	if payload.Target != nil {
 		t := payload.Target
-		b.WriteString(fmt.Sprintf("\nTarget type: %s\n", t.TargetType))
+		b.WriteString(fmt.Sprintf("Target type: %s\n", t.TargetType))
 		if t.PodName != "" {
 			b.WriteString(fmt.Sprintf("Pod: %s\n", t.PodName))
 		}
@@ -107,6 +162,32 @@ func buildPrompt(payload *pb.AlertPayload) string {
 			b.WriteString(fmt.Sprintf("%s=%s\n", l.Name, l.Value))
 		}
 	}
+}
 
+// Signature returns a stable, human-readable text signature of an alert used by
+// the semantic cache to find near-duplicate analyses. It deliberately excludes
+// pod name and timestamps so that the same failure on a different pod produces a
+// similar vector.
+func Signature(payload *pb.AlertPayload) string {
+	var b strings.Builder
+	b.WriteString(payload.AlertName)
+	b.WriteString(" ")
+	b.WriteString(payload.Namespace)
+	b.WriteString(" ")
+	b.WriteString(payload.Severity)
+	b.WriteString(" ")
+	b.WriteString(payload.Summary)
+	if payload.Target != nil {
+		b.WriteString(" ")
+		b.WriteString(payload.Target.TargetType)
+		b.WriteString(" ")
+		b.WriteString(payload.Target.Deployment)
+	}
+	for _, l := range payload.Labels {
+		b.WriteString(" ")
+		b.WriteString(l.Name)
+		b.WriteString("=")
+		b.WriteString(l.Value)
+	}
 	return b.String()
 }

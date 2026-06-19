@@ -64,6 +64,34 @@ spec:
               value: {{ .Values.config.alertmanagerSilenceDuration | quote }}
             - name: MUTHUR_CONFIG_FILE
               value: /config/muthur.yaml
+            - name: LLM_CACHE_ENABLED
+              value: {{ .Values.config.llmCacheEnabled | quote }}
+            - name: LLM_CACHE_TTL_MINUTES
+              value: {{ .Values.config.llmCacheTtlMinutes | quote }}
+            - name: SEMANTIC_CACHE_ENABLED
+              value: {{ .Values.config.semanticCacheEnabled | quote }}
+            - name: SEMANTIC_CACHE_THRESHOLD
+              value: {{ .Values.config.semanticCacheThreshold | quote }}
+            - name: SEMANTIC_CACHE_EMBED_DIM
+              value: {{ .Values.config.semanticCacheEmbedDim | quote }}
+            - name: CORRELATION_ENABLED
+              value: {{ .Values.config.correlationEnabled | quote }}
+            - name: CORRELATION_WINDOW_SECONDS
+              value: {{ .Values.config.correlationWindowSeconds | quote }}
+            - name: CORRELATION_MAX_GROUP
+              value: {{ .Values.config.correlationMaxGroup | quote }}
+            - name: FEEDBACK_FEW_SHOT
+              value: {{ .Values.config.feedbackFewShot | quote }}
+            {{- if .Values.config.publicUrl }}
+            - name: MUTHUR_PUBLIC_URL
+              value: {{ .Values.config.publicUrl | quote }}
+            {{- end }}
+            {{- if .Values.redis.url }}
+            - name: REDIS_URL
+              value: {{ .Values.redis.url | quote }}
+            - name: REDIS_PREFIX
+              value: {{ .Values.redis.prefix | quote }}
+            {{- end }}
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:

@@ -21,6 +21,18 @@ func FormatMessage(payload *pb.AlertPayload, analysis *evaluator.Analysis) *Mess
 	}
 }
 
+// FormatIncidentMessage builds a single Message for a correlated group of
+// alerts. representative is the alert the notification is primarily about
+// (typically the highest-severity one); alerts is the full group.
+func FormatIncidentMessage(representative *pb.AlertPayload, alerts []*pb.AlertPayload, analysis *evaluator.Analysis) *Message {
+	return &Message{
+		Payload:    representative,
+		Analysis:   analysis,
+		GrafanaURL: buildGrafanaURL(representative),
+		Incident:   &Incident{Alerts: alerts},
+	}
+}
+
 func buildGrafanaURL(payload *pb.AlertPayload) string {
 	if payload == nil || payload.GrafanaBaseUrl == "" {
 		return ""

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -155,11 +156,28 @@ func buildSlackAttachment(msg *Message) slackAttachment {
 			})
 		}
 
+		// Correlated incident — list the other alerts in the group.
+		if related := msg.RelatedSummaries(); len(related) > 0 {
+			body := fmt.Sprintf("*Related alerts (%d):*\n• %s", len(related), strings.Join(related, "\n• "))
+			blocks = append(blocks, slackBlock{
+				Type: "section",
+				Text: &slackText{Type: "mrkdwn", Text: truncate(body, 3000)},
+			})
+		}
+
 		// Grafana link context
 		if msg.GrafanaURL != "" {
 			blocks = append(blocks, slackBlock{
 				Type: "section",
 				Text: &slackText{Type: "mrkdwn", Text: "<" + msg.GrafanaURL + "|Open in Grafana>"},
+			})
+		}
+
+		// Feedback links
+		if msg.HasFeedback() {
+			blocks = append(blocks, slackBlock{
+				Type: "section",
+				Text: &slackText{Type: "mrkdwn", Text: fmt.Sprintf("Was this helpful? <%s|👍 Useful> | <%s|👎 Wrong>", msg.FeedbackUpURL, msg.FeedbackDownURL)},
 			})
 		}
 

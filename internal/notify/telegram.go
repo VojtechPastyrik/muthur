@@ -133,11 +133,31 @@ func buildTelegramHTML(msg *Message) string {
 		b.WriteString("\n")
 	}
 
+	// Correlated incident — list the other alerts in the group.
+	if related := msg.RelatedSummaries(); len(related) > 0 {
+		b.WriteString(fmt.Sprintf("\n<b>Related alerts (%d):</b>\n", len(related)))
+		for _, line := range related {
+			b.WriteString("• ")
+			b.WriteString(tgEscape(line))
+			b.WriteString("\n")
+		}
+	}
+
 	// Grafana link
 	if msg.GrafanaURL != "" {
 		b.WriteString("\n<a href=\"")
 		b.WriteString(tgEscapeAttr(msg.GrafanaURL))
-		b.WriteString("\">Open in Grafana</a>")
+		b.WriteString("\">Open in Grafana</a>\n")
+	}
+
+	// Feedback links
+	if msg.HasFeedback() {
+		b.WriteString("\n<b>Was this helpful?</b> ")
+		b.WriteString("<a href=\"")
+		b.WriteString(tgEscapeAttr(msg.FeedbackUpURL))
+		b.WriteString("\">👍 Useful</a> | <a href=\"")
+		b.WriteString(tgEscapeAttr(msg.FeedbackDownURL))
+		b.WriteString("\">👎 Wrong</a>")
 	}
 
 	return b.String()

@@ -8,109 +8,236 @@ import (
 
 	"github.com/VojtechPastyrik/muthur/internal/dedup"
 	"github.com/VojtechPastyrik/muthur/internal/evaluator"
+	"github.com/VojtechPastyrik/muthur/internal/feedback"
+	"github.com/VojtechPastyrik/muthur/internal/incident"
 	"github.com/VojtechPastyrik/muthur/internal/llmcache"
+	"github.com/VojtechPastyrik/muthur/internal/metrics"
 	"github.com/VojtechPastyrik/muthur/internal/notify"
 	"github.com/VojtechPastyrik/muthur/internal/routing"
 	"github.com/VojtechPastyrik/muthur/internal/silence"
 	pb "github.com/VojtechPastyrik/muthur/proto"
 )
 
+// CorrelationConfig controls alert correlation. When Enabled is false the
+// pipeline processes each alert independently (the original behaviour).
+type CorrelationConfig struct {
+	Enabled       bool
+	WindowSeconds int
+	MaxGroup      int
+}
+
 type Pipeline struct {
-	dedup     *dedup.Deduplicator
-	evaluator *evaluator.Evaluator
-	cache     *llmcache.Cache
-	router    *routing.Router
-	notifiers map[string]notify.Notifier
-	silence   *silence.Client
-	logger    *zap.Logger
+	dedup      *dedup.Deduplicator
+	evaluator  *evaluator.Evaluator
+	cache      *llmcache.Cache
+	router     *routing.Router
+	notifiers  map[string]notify.Notifier
+	silence    *silence.Client
+	feedback   *feedback.Manager
+	correlator *incident.Correlator
+	logger     *zap.Logger
 }
 
 func New(
-	dedup *dedup.Deduplicator,
+	dd *dedup.Deduplicator,
 	eval *evaluator.Evaluator,
 	cache *llmcache.Cache,
 	router *routing.Router,
 	notifiers map[string]notify.Notifier,
 	silence *silence.Client,
+	fb *feedback.Manager,
+	corr CorrelationConfig,
 	logger *zap.Logger,
 ) *Pipeline {
-	return &Pipeline{
-		dedup:     dedup,
+	p := &Pipeline{
+		dedup:     dd,
 		evaluator: eval,
 		cache:     cache,
 		router:    router,
 		notifiers: notifiers,
 		silence:   silence,
+		feedback:  fb,
 		logger:    logger,
 	}
+	p.correlator = incident.New(corr.Enabled, corr.WindowSeconds, corr.MaxGroup, p.processIncident, logger)
+	return p
 }
 
+// Process is the entry point for a single ingested alert.
 func (p *Pipeline) Process(payload *pb.AlertPayload) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+	metrics.AlertsReceived.WithLabelValues(payload.ClusterId, statusLabel(payload)).Inc()
 
-	resolved := payload.Status == "resolved"
-
-	// Resolved alerts bypass Claude (nothing to analyse) and dedup (the
-	// dedup window tracks firing alerts; a resolved notification should
-	// always be delivered to close the loop visually on the receiver side).
-	var analysis *evaluator.Analysis
-	if !resolved {
-		if p.dedup.IsDuplicate(payload) {
-			return
-		}
-
-		if cached, ok := p.cache.Get(payload); ok {
-			analysis = cached
-		} else {
-			var err error
-			analysis, err = p.evaluator.Evaluate(ctx, payload)
-			if err != nil {
-				p.logger.Error("evaluation failed",
-					zap.String("alert", payload.AlertName),
-					zap.Error(err),
-				)
-				// continue with nil analysis — still send notifications
-			} else {
-				p.cache.Set(payload, analysis)
-			}
-		}
-
-		if analysis != nil && analysis.Silence {
-			if err := p.silence.CreateSilence(ctx, payload, analysis.SilenceReason); err != nil {
-				p.logger.Error("failed to create silence",
-					zap.String("alert", payload.AlertName),
-					zap.Error(err),
-				)
-			}
-		}
-	}
-
-	targets := p.router.Route(payload)
-	if len(targets) == 0 {
+	// Resolved alerts bypass dedup, Claude, and correlation: they carry no
+	// analysis and should be delivered promptly to close the loop on the
+	// receiver side.
+	if payload.Status == "resolved" {
+		p.processResolved(payload)
 		return
 	}
 
-	msg := notify.FormatMessage(payload, analysis)
+	// Dedup before correlation so duplicate firings never inflate an incident.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	dup := p.dedup.IsDuplicate(ctx, payload)
+	cancel()
+	if dup {
+		return
+	}
 
+	if p.correlator.Enabled() {
+		p.correlator.Add(payload)
+		return
+	}
+	p.processSingle(payload)
+}
+
+func (p *Pipeline) processSingle(payload *pb.AlertPayload) {
+	metrics.PipelineInFlight.Inc()
+	defer metrics.PipelineInFlight.Dec()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	analysis := p.evaluate(ctx, payload)
+	p.maybeSilence(ctx, payload, analysis)
+
+	msg := notify.FormatMessage(payload, analysis)
+	p.attachFeedback(ctx, payload, analysis, msg)
+	p.deliver(ctx, payload, msg)
+}
+
+// processIncident is the correlator flush callback: one LLM evaluation and one
+// notification for the whole group.
+func (p *Pipeline) processIncident(alerts []*pb.AlertPayload) {
+	metrics.PipelineInFlight.Inc()
+	defer metrics.PipelineInFlight.Dec()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	rep := incident.Representative(alerts)
+	if rep == nil {
+		return
+	}
+
+	// A single-alert "incident" is just a normal alert — render it as one.
+	if len(alerts) == 1 {
+		analysis := p.evaluate(ctx, rep)
+		p.maybeSilence(ctx, rep, analysis)
+		msg := notify.FormatMessage(rep, analysis)
+		p.attachFeedback(ctx, rep, analysis, msg)
+		p.deliver(ctx, rep, msg)
+		metrics.Incidents.WithLabelValues(metrics.IncidentSizeBucket(1)).Inc()
+		return
+	}
+
+	analysis := p.evaluateIncident(ctx, rep, alerts)
+	p.maybeSilence(ctx, rep, analysis)
+
+	msg := notify.FormatIncidentMessage(rep, alerts, analysis)
+	p.attachFeedback(ctx, rep, analysis, msg)
+	p.deliver(ctx, rep, msg)
+
+	metrics.Incidents.WithLabelValues(metrics.IncidentSizeBucket(len(alerts))).Inc()
+	p.logger.Info("incident notified",
+		zap.String("cluster_id", rep.ClusterId),
+		zap.Int("alerts", len(alerts)),
+	)
+}
+
+func (p *Pipeline) processResolved(payload *pb.AlertPayload) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	msg := notify.FormatMessage(payload, nil)
+	p.deliver(ctx, payload, msg)
+}
+
+// evaluate returns the analysis for a single alert: cache first, then Claude
+// (with operator feedback as few-shot), caching the fresh result.
+func (p *Pipeline) evaluate(ctx context.Context, payload *pb.AlertPayload) *evaluator.Analysis {
+	if cached, ok := p.cache.Get(ctx, payload); ok {
+		return cached
+	}
+	examples := p.feedback.Examples(ctx, payload)
+	analysis, err := p.evaluator.Evaluate(ctx, payload, examples)
+	if err != nil {
+		p.logger.Error("evaluation failed",
+			zap.String("alert", payload.AlertName),
+			zap.Error(err),
+		)
+		return nil
+	}
+	p.cache.Set(ctx, payload, analysis)
+	return analysis
+}
+
+// evaluateIncident asks Claude for one unified analysis across the group.
+// Incidents are not cached — each correlated group is unique.
+func (p *Pipeline) evaluateIncident(ctx context.Context, rep *pb.AlertPayload, alerts []*pb.AlertPayload) *evaluator.Analysis {
+	examples := p.feedback.Examples(ctx, rep)
+	analysis, err := p.evaluator.EvaluateIncident(ctx, alerts, examples)
+	if err != nil {
+		p.logger.Error("incident evaluation failed",
+			zap.String("cluster_id", rep.ClusterId),
+			zap.Int("alerts", len(alerts)),
+			zap.Error(err),
+		)
+		return nil
+	}
+	return analysis
+}
+
+func (p *Pipeline) maybeSilence(ctx context.Context, payload *pb.AlertPayload, analysis *evaluator.Analysis) {
+	if analysis == nil || !analysis.Silence {
+		return
+	}
+	if err := p.silence.CreateSilence(ctx, payload, analysis.SilenceReason); err != nil {
+		p.logger.Error("failed to create silence",
+			zap.String("alert", payload.AlertName),
+			zap.Error(err),
+		)
+	}
+}
+
+func (p *Pipeline) attachFeedback(ctx context.Context, payload *pb.AlertPayload, analysis *evaluator.Analysis, msg *notify.Message) {
+	if analysis == nil {
+		return
+	}
+	up, down := p.feedback.Record(ctx, payload, analysis)
+	msg.FeedbackUpURL = up
+	msg.FeedbackDownURL = down
+}
+
+func (p *Pipeline) deliver(ctx context.Context, routeBy *pb.AlertPayload, msg *notify.Message) {
+	targets := p.router.Route(routeBy)
+	if len(targets) == 0 {
+		return
+	}
 	for _, name := range targets {
 		notifier, ok := p.notifiers[name]
 		if !ok {
 			p.logger.Warn("notifier not registered", zap.String("notifier", name))
 			continue
 		}
-
 		if err := notifier.Send(ctx, msg); err != nil {
+			metrics.Notifications.WithLabelValues(name, "error").Inc()
 			p.logger.Error("notification failed",
 				zap.String("notifier", name),
-				zap.String("alert", payload.AlertName),
+				zap.String("alert", routeBy.AlertName),
 				zap.Error(err),
 			)
 		} else {
+			metrics.Notifications.WithLabelValues(name, "ok").Inc()
 			p.logger.Info("notification sent",
 				zap.String("notifier", name),
-				zap.String("alert", payload.AlertName),
+				zap.String("alert", routeBy.AlertName),
 			)
 		}
 	}
+}
+
+func statusLabel(payload *pb.AlertPayload) string {
+	if payload.Status == "resolved" {
+		return "resolved"
+	}
+	return "firing"
 }

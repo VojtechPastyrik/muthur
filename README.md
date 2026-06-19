@@ -31,7 +31,12 @@ flowchart TD
 
 ## Features
 
-- **Claude-powered root cause analysis** — structured JSON output with evidence and recommended action
+- **Claude-powered root cause analysis** — structured output via forced tool-use (no fragile markdown-JSON parsing), with evidence and recommended action
+- **Alert correlation / incident grouping** — alerts that fire close together (same cluster+namespace, or same node) are grouped into one incident: one Claude call, one notification, instead of one per alert. Cuts alert-storm fatigue. Opt-in via `correlationEnabled`.
+- **Persistent state (Redis/Dragonfly)** — dedup window, analysis cache, and feedback survive restarts and are shared across replicas when `redis.url` is set; falls back to an in-memory store otherwise
+- **Semantic LLM cache** — reuses a prior analysis for a *near-duplicate* alert (same root cause, different pod) via a local in-process embedder — no external embeddings call, so alert data never leaves the cluster. Opt-in via `semanticCacheEnabled`.
+- **Feedback loop** — every notification can carry 👍 useful / 👎 wrong links; recorded verdicts are replayed into future prompts as few-shot guidance so analyses improve per-cluster. Enable by setting `config.publicUrl`.
+- **Self-observability** — Prometheus metrics at `/metrics` (alert throughput, dedup/cache hit rate, LLM calls + token usage, notification delivery, incidents, feedback)
 - **AlertManager-style receivers** — multiple named receivers, any number of each type (Discord, Telegram, Slack, PagerDuty, webhook)
 - **File-mounted secrets** — sensitive values come from Kubernetes Secrets mounted as files, never env vars (safer against `/proc`, ps, crash dump leakage)
 - **Flexible routing** — first-match rules by severity, cluster_id, alert_name, namespace
@@ -40,6 +45,32 @@ flowchart TD
 - **AlertManager silence integration** — Claude can request auto-silences for known transient alerts
 - **Grafana deep links** — every notification includes an Explore link pre-filtered to the alert's namespace and pod
 - **No emoji ever** — plain text output only
+
+### HTTP endpoints
+
+| Method | Path        | Purpose                                                        |
+|--------|-------------|---------------------------------------------------------------|
+| POST   | `/ingest`   | Receive protobuf alert payloads from collectors               |
+| GET    | `/feedback` | Operator feedback callback (`?id=..&verdict=useful\|wrong`)    |
+| GET    | `/metrics`  | Prometheus metrics                                            |
+| GET    | `/healthz`  | Liveness probe                                                 |
+
+### Configuration (env)
+
+Beyond the existing settings, the new features add:
+
+| Env var | Default | Purpose |
+|---------|---------|---------|
+| `REDIS_URL` | _(empty)_ | Redis/Dragonfly connection string; empty → in-memory store |
+| `REDIS_PREFIX` | `muthur:` | Key namespace prefix |
+| `SEMANTIC_CACHE_ENABLED` | `false` | Enable the semantic cache layer |
+| `SEMANTIC_CACHE_THRESHOLD` | `0.95` | Min cosine similarity for a semantic hit |
+| `SEMANTIC_CACHE_EMBED_DIM` | `256` | Embedding dimensionality |
+| `CORRELATION_ENABLED` | `false` | Group correlated alerts into incidents |
+| `CORRELATION_WINDOW_SECONDS` | `30` | Debounce window for grouping |
+| `CORRELATION_MAX_GROUP` | `25` | Max alerts per incident |
+| `MUTHUR_PUBLIC_URL` | _(empty)_ | Externally reachable base URL; required for feedback links |
+| `FEEDBACK_FEW_SHOT` | `3` | Recent verdicts replayed into prompts |
 
 ## Prerequisites
 

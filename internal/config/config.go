@@ -24,6 +24,27 @@ type Config struct {
 	LLMCacheEnabled        bool
 	LLMCacheTTLMinutes     int
 	ConfigFile             string
+
+	// Persistence. When RedisURL is set, dedup/cache/feedback state is shared
+	// across replicas and survives restarts; otherwise an in-memory store is
+	// used.
+	RedisURL    string
+	RedisPrefix string
+
+	// Semantic cache reuses a prior analysis for a near-duplicate alert.
+	SemanticCacheEnabled bool
+	SemanticThreshold    float64
+	EmbedDim             int
+
+	// Alert correlation groups alerts that fire close together into one
+	// incident (one LLM call, one notification).
+	CorrelationEnabled       bool
+	CorrelationWindowSeconds int
+	CorrelationMaxGroup      int
+
+	// Feedback. PublicURL must be set for feedback links to be emitted.
+	PublicURL       string
+	FeedbackFewShot int
 }
 
 type CollectorConfig struct {
@@ -43,6 +64,19 @@ func Load() (*Config, error) {
 
 	silenceEnabled, _ := strconv.ParseBool(envOr("ALERTMANAGER_SILENCE_ENABLED", "false"))
 
+	semanticEnabled, _ := strconv.ParseBool(envOr("SEMANTIC_CACHE_ENABLED", "false"))
+	semanticThreshold, err := strconv.ParseFloat(envOr("SEMANTIC_CACHE_THRESHOLD", "0.95"), 64)
+	if err != nil {
+		semanticThreshold = 0.95
+	}
+	embedDim, _ := strconv.Atoi(envOr("SEMANTIC_CACHE_EMBED_DIM", "256"))
+
+	correlationEnabled, _ := strconv.ParseBool(envOr("CORRELATION_ENABLED", "false"))
+	correlationWindow, _ := strconv.Atoi(envOr("CORRELATION_WINDOW_SECONDS", "30"))
+	correlationMaxGroup, _ := strconv.Atoi(envOr("CORRELATION_MAX_GROUP", "25"))
+
+	fewShot, _ := strconv.Atoi(envOr("FEEDBACK_FEW_SHOT", "3"))
+
 	cfg := &Config{
 		Port:                   envOr("PORT", "8080"),
 		LogLevel:               envOr("LOG_LEVEL", "info"),
@@ -55,6 +89,20 @@ func Load() (*Config, error) {
 		LLMCacheEnabled:        cacheEnabled,
 		LLMCacheTTLMinutes:     cacheTTL,
 		ConfigFile:             envOr("MUTHUR_CONFIG_FILE", "/config/muthur.yaml"),
+
+		RedisURL:    os.Getenv("REDIS_URL"),
+		RedisPrefix: envOr("REDIS_PREFIX", "muthur:"),
+
+		SemanticCacheEnabled: semanticEnabled,
+		SemanticThreshold:    semanticThreshold,
+		EmbedDim:             embedDim,
+
+		CorrelationEnabled:       correlationEnabled,
+		CorrelationWindowSeconds: correlationWindow,
+		CorrelationMaxGroup:      correlationMaxGroup,
+
+		PublicURL:       os.Getenv("MUTHUR_PUBLIC_URL"),
+		FeedbackFewShot: fewShot,
 	}
 
 	// Load collector tokens from COLLECTOR_TOKENS env (format: "clusterId:token,clusterId:token")

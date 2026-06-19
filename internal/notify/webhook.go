@@ -30,19 +30,32 @@ func newWebhook(name string, cfg map[string]string) (Notifier, error) {
 func (w *Webhook) Name() string { return w.name }
 
 type webhookPayload struct {
-	Status      string         `json:"status"`
-	Severity    string         `json:"severity"`
-	ClusterID   string         `json:"cluster_id"`
-	AlertName   string         `json:"alert_name"`
-	Namespace   string         `json:"namespace"`
-	Pod         string         `json:"pod,omitempty"`
-	Target      string         `json:"target,omitempty"`
-	Summary     string         `json:"summary,omitempty"`
-	Description string         `json:"description,omitempty"`
-	FiredAt     string         `json:"fired_at,omitempty"`
-	GrafanaURL  string         `json:"grafana_url,omitempty"`
-	Analysis    *webhookAI     `json:"analysis,omitempty"`
-	Labels      map[string]any `json:"labels,omitempty"`
+	Status        string           `json:"status"`
+	Severity      string           `json:"severity"`
+	ClusterID     string           `json:"cluster_id"`
+	AlertName     string           `json:"alert_name"`
+	Namespace     string           `json:"namespace"`
+	Pod           string           `json:"pod,omitempty"`
+	Target        string           `json:"target,omitempty"`
+	Summary       string           `json:"summary,omitempty"`
+	Description   string           `json:"description,omitempty"`
+	FiredAt       string           `json:"fired_at,omitempty"`
+	GrafanaURL    string           `json:"grafana_url,omitempty"`
+	Analysis      *webhookAI       `json:"analysis,omitempty"`
+	Labels        map[string]any   `json:"labels,omitempty"`
+	RelatedAlerts []webhookRelated `json:"related_alerts,omitempty"`
+	Feedback      *webhookFeedback `json:"feedback,omitempty"`
+}
+
+type webhookRelated struct {
+	AlertName string `json:"alert_name"`
+	Namespace string `json:"namespace,omitempty"`
+	Severity  string `json:"severity,omitempty"`
+}
+
+type webhookFeedback struct {
+	UsefulURL string `json:"useful_url"`
+	WrongURL  string `json:"wrong_url"`
 }
 
 type webhookAI struct {
@@ -113,6 +126,19 @@ func buildWebhookPayload(msg *Message) webhookPayload {
 			Action:    msg.Analysis.Action,
 			Silence:   msg.Analysis.Silence,
 		}
+	}
+	if msg.IsIncident() {
+		for _, a := range msg.Incident.Alerts {
+			if a == msg.Payload {
+				continue
+			}
+			wp.RelatedAlerts = append(wp.RelatedAlerts, webhookRelated{
+				AlertName: a.AlertName, Namespace: a.Namespace, Severity: a.Severity,
+			})
+		}
+	}
+	if msg.HasFeedback() {
+		wp.Feedback = &webhookFeedback{UsefulURL: msg.FeedbackUpURL, WrongURL: msg.FeedbackDownURL}
 	}
 	return wp
 }

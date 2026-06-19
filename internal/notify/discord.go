@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -152,6 +153,22 @@ func buildDiscordEmbed(msg *Message) discordEmbed {
 				Value: truncate(msg.Analysis.Action, 1024),
 			})
 		}
+	}
+
+	// Correlated incident — list the other alerts in the group.
+	if related := msg.RelatedSummaries(); len(related) > 0 {
+		fields = append(fields, discordEmbedField{
+			Name:  fmt.Sprintf("Related alerts (%d)", len(related)),
+			Value: truncate("• "+strings.Join(related, "\n• "), 1024),
+		})
+	}
+
+	// Feedback links.
+	if msg.HasFeedback() {
+		fields = append(fields, discordEmbedField{
+			Name:  "Was this analysis helpful?",
+			Value: fmt.Sprintf("[👍 Useful](%s)  •  [👎 Wrong](%s)", msg.FeedbackUpURL, msg.FeedbackDownURL),
+		})
 	}
 
 	embed.Fields = fields

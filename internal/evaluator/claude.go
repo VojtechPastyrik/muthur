@@ -4,16 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"go.uber.org/zap"
 
+	"github.com/VojtechPastyrik/muthur/internal/metrics"
 	pb "github.com/VojtechPastyrik/muthur/proto"
 )
 
+// Analysis is the structured verdict Claude returns for an alert or incident.
 type Analysis struct {
 	Severity      string `json:"severity"`
 	RootCause     string `json:"root_cause"`
@@ -21,6 +22,16 @@ type Analysis struct {
 	Action        string `json:"action"`
 	Silence       bool   `json:"silence"`
 	SilenceReason string `json:"silence_reason,omitempty"`
+}
+
+// Example is a past analysis with an operator verdict, fed back to Claude as a
+// few-shot signal so evaluations improve per-cluster over time. Defined here
+// (rather than in the feedback package) so evaluator has no dependency on
+// feedback — the dependency runs the other way.
+type Example struct {
+	AlertName string
+	Verdict   string // "useful" or "wrong"
+	Analysis  *Analysis
 }
 
 type Evaluator struct {
@@ -38,8 +49,60 @@ func New(apiKey, model string, logger *zap.Logger) *Evaluator {
 	}
 }
 
-func (e *Evaluator) Evaluate(ctx context.Context, payload *pb.AlertPayload) (*Analysis, error) {
-	prompt := buildPrompt(payload)
+// analysisTool forces Claude to return its verdict as validated tool input
+// rather than free-form text wrapped in markdown fences. This eliminates the
+// JSON-parsing failure mode entirely — the SDK guarantees the input matches the
+// schema before it reaches us.
+func analysisTool() anthropic.ToolParam {
+	return anthropic.ToolParam{
+		Name:        "report_analysis",
+		Description: anthropic.String("Report the structured analysis of the Kubernetes alert or incident. Always call this exactly once."),
+		InputSchema: anthropic.ToolInputSchemaParam{
+			Properties: map[string]any{
+				"severity": map[string]any{
+					"type":        "string",
+					"enum":        []string{"critical", "warning", "info"},
+					"description": "Overall severity of the situation based on the evidence.",
+				},
+				"root_cause": map[string]any{
+					"type":        "string",
+					"description": "One sentence root cause grounded in the provided logs and metrics.",
+				},
+				"evidence": map[string]any{
+					"type":        "string",
+					"description": "Specific log lines or metric trends supporting the root cause.",
+				},
+				"action": map[string]any{
+					"type":        "string",
+					"description": "Recommended immediate action.",
+				},
+				"silence": map[string]any{
+					"type":        "boolean",
+					"description": "True only if this alert is noise that should be silenced.",
+				},
+				"silence_reason": map[string]any{
+					"type":        "string",
+					"description": "Why the alert should be silenced. Only set when silence is true.",
+				},
+			},
+			Required: []string{"severity", "root_cause", "evidence", "action", "silence"},
+		},
+	}
+}
+
+// Evaluate analyses a single alert.
+func (e *Evaluator) Evaluate(ctx context.Context, payload *pb.AlertPayload, examples []Example) (*Analysis, error) {
+	return e.run(ctx, buildPrompt(payload, examples))
+}
+
+// EvaluateIncident analyses a group of correlated alerts as one incident,
+// asking Claude for a single unified root cause spanning all of them.
+func (e *Evaluator) EvaluateIncident(ctx context.Context, payloads []*pb.AlertPayload, examples []Example) (*Analysis, error) {
+	return e.run(ctx, buildIncidentPrompt(payloads, examples))
+}
+
+func (e *Evaluator) run(ctx context.Context, prompt string) (*Analysis, error) {
+	start := time.Now()
 
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
@@ -49,11 +112,17 @@ func (e *Evaluator) Evaluate(ctx context.Context, payload *pb.AlertPayload) (*An
 				zap.Int("attempt", attempt+1),
 				zap.Duration("backoff", backoff),
 			)
-			time.Sleep(backoff)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
 		}
 
 		analysis, err := e.call(ctx, prompt)
 		if err == nil {
+			metrics.LLMCalls.WithLabelValues("ok").Inc()
+			metrics.LLMCallDuration.Observe(time.Since(start).Seconds())
 			return analysis, nil
 		}
 		lastErr = err
@@ -63,13 +132,19 @@ func (e *Evaluator) Evaluate(ctx context.Context, payload *pb.AlertPayload) (*An
 		)
 	}
 
+	metrics.LLMCalls.WithLabelValues("error").Inc()
+	metrics.LLMCallDuration.Observe(time.Since(start).Seconds())
 	return nil, fmt.Errorf("Claude API failed after 3 attempts: %w", lastErr)
 }
 
 func (e *Evaluator) call(ctx context.Context, prompt string) (*Analysis, error) {
+	tool := analysisTool()
 	message, err := e.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(e.model),
 		MaxTokens: 1024,
+		Tools:     []anthropic.ToolUnionParam{{OfTool: &tool}},
+		// Force the model to emit the structured tool call rather than prose.
+		ToolChoice: anthropic.ToolChoiceParamOfTool(tool.Name),
 		Messages: []anthropic.MessageParam{
 			anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
 		},
@@ -78,42 +153,17 @@ func (e *Evaluator) call(ctx context.Context, prompt string) (*Analysis, error) 
 		return nil, fmt.Errorf("messages.new: %w", err)
 	}
 
-	if len(message.Content) == 0 {
-		return nil, fmt.Errorf("empty response from Claude")
-	}
+	metrics.LLMTokens.WithLabelValues("input").Add(float64(message.Usage.InputTokens))
+	metrics.LLMTokens.WithLabelValues("output").Add(float64(message.Usage.OutputTokens))
 
-	text := message.Content[0].Text
-	if text == "" {
-		return nil, fmt.Errorf("no text content in Claude response")
+	for _, block := range message.Content {
+		if tu, ok := block.AsAny().(anthropic.ToolUseBlock); ok && tu.Name == tool.Name {
+			var analysis Analysis
+			if err := json.Unmarshal(tu.Input, &analysis); err != nil {
+				return nil, fmt.Errorf("unmarshal tool input: %w", err)
+			}
+			return &analysis, nil
+		}
 	}
-
-	cleaned := stripJSONFences(text)
-
-	var analysis Analysis
-	if err := json.Unmarshal([]byte(cleaned), &analysis); err != nil {
-		return nil, fmt.Errorf("failed to parse Claude response as JSON: %w (raw: %s)", err, text)
-	}
-
-	return &analysis, nil
-}
-
-// stripJSONFences removes markdown code fences (```json ... ``` or ``` ... ```)
-// that Claude sometimes wraps around JSON output despite being told not to.
-// Safe no-op when the text is already bare JSON.
-func stripJSONFences(text string) string {
-	s := strings.TrimSpace(text)
-	if !strings.HasPrefix(s, "```") {
-		return s
-	}
-	// Drop opening fence line (```json, ```JSON, ``` etc.)
-	if nl := strings.IndexByte(s, '\n'); nl >= 0 {
-		s = s[nl+1:]
-	} else {
-		s = strings.TrimPrefix(s, "```")
-	}
-	// Drop closing fence
-	if idx := strings.LastIndex(s, "```"); idx >= 0 {
-		s = s[:idx]
-	}
-	return strings.TrimSpace(s)
+	return nil, fmt.Errorf("Claude returned no %s tool call", tool.Name)
 }

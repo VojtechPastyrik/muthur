@@ -1,25 +1,31 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
 	"github.com/VojtechPastyrik/muthur/internal/appconfig"
 	"github.com/VojtechPastyrik/muthur/internal/config"
 	"github.com/VojtechPastyrik/muthur/internal/dedup"
+	"github.com/VojtechPastyrik/muthur/internal/embed"
 	"github.com/VojtechPastyrik/muthur/internal/evaluator"
+	"github.com/VojtechPastyrik/muthur/internal/feedback"
 	"github.com/VojtechPastyrik/muthur/internal/ingest"
 	"github.com/VojtechPastyrik/muthur/internal/llmcache"
 	"github.com/VojtechPastyrik/muthur/internal/notify"
 	"github.com/VojtechPastyrik/muthur/internal/pipeline"
 	"github.com/VojtechPastyrik/muthur/internal/routing"
 	"github.com/VojtechPastyrik/muthur/internal/silence"
+	"github.com/VojtechPastyrik/muthur/internal/store"
 )
 
 func main() {
@@ -67,14 +73,37 @@ func run() error {
 		}
 	}
 
+	// Persistence: shared Redis/Dragonfly when configured, in-memory otherwise.
+	st, err := newStore(cfg, logger)
+	if err != nil {
+		return fmt.Errorf("init store: %w", err)
+	}
+	defer st.Close()
+	logger.Info("state store ready", zap.String("kind", st.Kind()))
+
 	// Evaluator (Claude)
 	eval := evaluator.New(cfg.AnthropicAPIKey, cfg.AnthropicModel, logger)
 
 	// Dedup
-	dd := dedup.New(cfg.DedupWindowMinutes, logger)
+	dd := dedup.New(cfg.DedupWindowMinutes, st, logger)
 
-	// LLM response cache
-	cache := llmcache.New(cfg.LLMCacheEnabled, cfg.LLMCacheTTLMinutes, logger)
+	// Semantic-cache embedder (local feature hashing — no external calls).
+	var embedder embed.Embedder
+	if cfg.SemanticCacheEnabled {
+		embedder = embed.NewHashEmbedder(cfg.EmbedDim)
+	}
+
+	// LLM response cache (exact + optional semantic layer)
+	cache := llmcache.New(cfg.LLMCacheEnabled, cfg.LLMCacheTTLMinutes, st, embedder,
+		cfg.SemanticCacheEnabled, cfg.SemanticThreshold, logger)
+
+	// Feedback loop
+	fb := feedback.New(st, cfg.PublicURL, cfg.FeedbackFewShot, logger)
+	if fb.LinksEnabled() {
+		logger.Info("feedback links enabled", zap.String("public_url", cfg.PublicURL))
+	} else {
+		logger.Info("feedback links disabled (set MUTHUR_PUBLIC_URL to enable)")
+	}
 
 	// Router
 	router := routing.New(fileCfg.Routing.Rules, logger)
@@ -88,7 +117,18 @@ func run() error {
 	)
 
 	// Pipeline
-	pipe := pipeline.New(dd, eval, cache, router, notifiers, silenceClient, logger)
+	pipe := pipeline.New(dd, eval, cache, router, notifiers, silenceClient, fb,
+		pipeline.CorrelationConfig{
+			Enabled:       cfg.CorrelationEnabled,
+			WindowSeconds: cfg.CorrelationWindowSeconds,
+			MaxGroup:      cfg.CorrelationMaxGroup,
+		}, logger)
+	if cfg.CorrelationEnabled {
+		logger.Info("alert correlation enabled",
+			zap.Int("window_seconds", cfg.CorrelationWindowSeconds),
+			zap.Int("max_group", cfg.CorrelationMaxGroup),
+		)
+	}
 
 	// HTTP server
 	r := chi.NewRouter()
@@ -98,6 +138,12 @@ func run() error {
 	handler := ingest.NewHandler(cfg.CollectorTokenMap(), pipe, logger)
 	r.Post("/ingest", handler.ServeHTTP)
 
+	// Operator feedback callback (GET /feedback?id=..&verdict=useful|wrong).
+	r.Get("/feedback", fb.ServeHTTP)
+
+	// Self-observability: Prometheus metrics.
+	r.Handle("/metrics", promhttp.Handler())
+
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
@@ -106,6 +152,18 @@ func run() error {
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	logger.Info("starting muthur", zap.String("addr", addr))
 	return http.ListenAndServe(addr, r)
+}
+
+// newStore selects the persistence backend. A configured REDIS_URL gives a
+// Redis/Dragonfly-backed store shared across replicas; otherwise an in-memory
+// store is used (per-instance, lost on restart).
+func newStore(cfg *config.Config, logger *zap.Logger) (store.Store, error) {
+	if cfg.RedisURL == "" {
+		return store.NewMemory(), nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return store.NewRedis(ctx, cfg.RedisURL, cfg.RedisPrefix)
 }
 
 func newLogger(level string) (*zap.Logger, error) {

@@ -115,6 +115,13 @@ func buildPagerDutyEvent(routingKey string, msg *Message) map[string]any {
 	if msg.GrafanaURL != "" {
 		customDetails["grafana"] = msg.GrafanaURL
 	}
+	if related := msg.RelatedSummaries(); len(related) > 0 {
+		customDetails["related_alerts"] = related
+	}
+	if msg.HasFeedback() {
+		customDetails["feedback_useful_url"] = msg.FeedbackUpURL
+		customDetails["feedback_wrong_url"] = msg.FeedbackDownURL
+	}
 
 	event := map[string]any{
 		"routing_key":  routingKey,

@@ -5,3 +5,6 @@ bin/
 *.out
 .DS_Store
 .idea/
+
+# GSD planning artifacts (local only)
+.planning/

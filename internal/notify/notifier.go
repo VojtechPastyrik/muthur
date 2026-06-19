@@ -20,6 +20,54 @@ type Message struct {
 	Payload    *pb.AlertPayload
 	Analysis   *evaluator.Analysis
 	GrafanaURL string
+
+	// Incident, when non-nil, means Payload is the representative alert of a
+	// correlated group; RelatedAlerts holds the others. Notifiers surface this
+	// as a "related alerts" section so one incident = one notification.
+	Incident *Incident
+
+	// FeedbackUpURL / FeedbackDownURL, when set, are clickable links operators
+	// use to mark the analysis useful or wrong. Empty when feedback links are
+	// disabled (no public URL configured).
+	FeedbackUpURL   string
+	FeedbackDownURL string
+}
+
+// Incident groups the alerts that were correlated into a single notification.
+type Incident struct {
+	// Alerts is every alert in the group, including the representative.
+	Alerts []*pb.AlertPayload
+}
+
+// IsIncident reports whether this message represents a correlated group of more
+// than one alert.
+func (m *Message) IsIncident() bool {
+	return m.Incident != nil && len(m.Incident.Alerts) > 1
+}
+
+// RelatedSummaries returns one short line per alert in the incident other than
+// the representative (e.g. "PodCrashLoop (ns: default)").
+func (m *Message) RelatedSummaries() []string {
+	if !m.IsIncident() {
+		return nil
+	}
+	var out []string
+	for _, a := range m.Incident.Alerts {
+		if a == m.Payload {
+			continue
+		}
+		line := a.AlertName
+		if a.Namespace != "" {
+			line += " (ns: " + a.Namespace + ")"
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// HasFeedback reports whether feedback links are present.
+func (m *Message) HasFeedback() bool {
+	return m.FeedbackUpURL != "" && m.FeedbackDownURL != ""
 }
 
 // Resolved reports whether the underlying alert is a resolved notification.

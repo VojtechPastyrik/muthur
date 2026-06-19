@@ -120,6 +120,37 @@ config:
   alertmanagerSilenceDuration: 2h
   logLevel: info
 
+  # --- LLM analysis cache ---
+  llmCacheEnabled: true
+  llmCacheTtlMinutes: 30
+  # Semantic cache reuses a prior analysis for a near-duplicate alert (same root
+  # cause, different pod). Uses a local in-process embedder — no external calls.
+  semanticCacheEnabled: false
+  semanticCacheThreshold: "0.95" # minimum cosine similarity for a semantic hit
+  semanticCacheEmbedDim: 256
+
+  # --- Alert correlation ---
+  # Groups alerts firing close together (same cluster+namespace, or same node)
+  # into ONE incident: one Claude call, one notification. Cuts alert-storm noise.
+  correlationEnabled: false
+  correlationWindowSeconds: 30
+  correlationMaxGroup: 25
+
+  # --- Feedback loop ---
+  # Number of recent operator verdicts replayed into the prompt as few-shot.
+  feedbackFewShot: 3
+  # Externally reachable base URL of muthur-central. Required for the thumbs-up /
+  # thumbs-down feedback links in notifications to be emitted and clickable.
+  publicUrl: ""
+
+# --- Persistence ---
+# When url is set, dedup / analysis cache / feedback state is shared across
+# replicas and survives restarts (Redis or DragonflyDB, redis:// or rediss://).
+# Empty = in-memory store, per-replica, lost on restart.
+redis:
+  url: ""
+  prefix: "muthur:"
+
 collectors:
   - clusterId: cluster-home
     tokenSecretKey: collector-token-cluster-home
