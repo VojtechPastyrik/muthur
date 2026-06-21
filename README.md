@@ -42,7 +42,10 @@ flowchart TD
 - **Flexible routing** — first-match rules by severity, cluster_id, alert_name, namespace
 - **Per-cluster authentication** — each collector carries its own token; muthur validates both token and cluster_id
 - **Deduplication** — SHA256-keyed sliding window, configurable TTL
-- **AlertManager silence integration** — Claude can request auto-silences for known transient alerts
+- **AlertManager silence integration** — Claude can request auto-silences for known transient alerts. Guarded: critical-severity alerts are *never* auto-silenced, and an optional alertname allowlist (`ALERTMANAGER_SILENCE_ALLOWLIST`) restricts what may be muted — defence against a prompt-injected log line steering a silence onto a real page
+- **LLM never blocks delivery** — each Claude call is bounded by `LLM_TIMEOUT`; on timeout/error the raw alert is delivered without enrichment instead of holding the page
+- **Trust calibration** — every analysis carries a `confidence` (high/medium/low) and `grounding` (stated vs inferred) signal, surfaced in notifications so on-call can tell a data-grounded root cause from a confident guess
+- **Cost backstop** — hard rate + concurrency ceiling on LLM calls; a pathological alert storm degrades to raw delivery rather than an unbounded API bill
 - **Grafana deep links** — every notification includes an Explore link pre-filtered to the alert's namespace and pod
 - **No emoji ever** — plain text output only
 
@@ -61,6 +64,11 @@ Beyond the existing settings, the new features add:
 
 | Env var | Default | Purpose |
 |---------|---------|---------|
+| `LLM_TIMEOUT` | `20s` | Per-call Claude deadline; on timeout the raw alert is delivered unenriched |
+| `LLM_MAX_CALLS_PER_MINUTE` | `60` | Cost backstop: sustained LLM call ceiling (0 disables) |
+| `LLM_BURST` | `15` | Cost backstop: max instantaneous burst of LLM calls |
+| `LLM_MAX_CONCURRENT` | `8` | Cost backstop: max in-flight LLM calls (0 disables) |
+| `ALERTMANAGER_SILENCE_ALLOWLIST` | _(empty)_ | Comma-separated alertnames eligible for auto-silence; empty = no restriction. Critical alerts are never silenced |
 | `REDIS_URL` | _(empty)_ | Redis/Dragonfly connection string; empty → in-memory store |
 | `REDIS_PREFIX` | `muthur:` | Key namespace prefix |
 | `SEMANTIC_CACHE_ENABLED` | `false` | Enable the semantic cache layer |
@@ -163,6 +171,10 @@ routing:
 ```
 
 Secrets are provisioned via External Secrets Operator (for production) or inline `devSecrets.receiverSecrets` (for local dev). The chart mounts them at `/secrets/receivers/<key>` and the ConfigMap renders `<field>_file: /secrets/receivers/<key>` in each receiver config.
+
+## Protobuf contract sync
+
+The `alert.proto` schema is shared with [muthur-collector](https://github.com/VojtechPastyrik/muthur-collector); each repo vendors its own copy. CI runs `make proto-check`, which hashes the schema (ignoring the per-repo `go_package` line) and fails if it drifts from the committed `proto/alert.proto.sha256`. Changing the contract requires `./scripts/check-proto-sync.sh --update` and mirroring the edit + new hash into the sibling repo — the two are released together so a field added on one side never silently diverges from the other.
 
 ## License
 

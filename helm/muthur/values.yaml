@@ -9,6 +9,14 @@ service:
   type: ClusterIP
   port: 8080
 
+# Prometheus Operator ServiceMonitor for the /metrics endpoint. Enable when
+# kube-prometheus-stack (or any Prometheus Operator) is present.
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+
 ingress:
   enabled: true
   className: traefik
@@ -113,11 +121,27 @@ routing:
 config:
   anthropicModel: claude-opus-4-5
   dedupWindowMinutes: 15
+  # Per-call Claude timeout. Bounds how long a single (possibly hung) API call
+  # can delay a page before muthur falls back to delivering the raw alert. The
+  # LLM enriches — it must never block delivery.
+  llmTimeout: 20s
+  # --- Cost backstop ---
+  # Hard ceilings on Claude calls, the last line of defence after cache/dedup/
+  # correlation. Under a storm of distinct, uncacheable alerts the pipeline
+  # degrades to raw delivery instead of an unbounded bill. Set
+  # llmMaxCallsPerMinute or llmMaxConcurrent to 0 to disable.
+  llmMaxCallsPerMinute: 60
+  llmBurst: 15
+  llmMaxConcurrent: 8
   # Grafana base URL is provided per-alert by the forwarding collector
   # (see muthur-collector config.grafanaBaseUrl) — there is no global fallback.
   alertmanagerUrl: http://alertmanager.monitoring.svc:9093
   alertmanagerSilenceEnabled: false
   alertmanagerSilenceDuration: 2h
+  # Comma-separated alertnames that may be auto-silenced. Empty = no alertname
+  # restriction. Critical-severity alerts are NEVER auto-silenced regardless of
+  # this list — a hard guard against a prompt-injected log line muting a page.
+  alertmanagerSilenceAllowlist: ""
   logLevel: info
 
   # --- LLM analysis cache ---

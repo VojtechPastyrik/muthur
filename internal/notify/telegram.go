@@ -125,6 +125,11 @@ func buildTelegramHTML(msg *Message) string {
 			b.WriteString(tgEscape(msg.Analysis.Action))
 			b.WriteString("\n")
 		}
+		if cl := msg.ConfidenceLine(); cl != "" {
+			b.WriteString("<i>")
+			b.WriteString(tgEscape(cl))
+			b.WriteString("</i>\n")
+		}
 	} else if msg.Resolved() {
 		b.WriteString("\n<i>Alert has cleared.</i>\n")
 	} else if p.Summary != "" {

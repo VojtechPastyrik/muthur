@@ -50,6 +50,21 @@ var (
 		Help: "Claude token usage by direction.",
 	}, []string{"direction"})
 
+	// LLMThrottled counts LLM evaluations skipped by the cost backstop, by
+	// reason: rate (calls-per-minute ceiling) or concurrency (in-flight cap).
+	// A throttled alert is still delivered, just without Claude enrichment.
+	LLMThrottled = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "muthur_llm_throttled_total",
+		Help: "LLM evaluations skipped by the rate/concurrency backstop, by reason.",
+	}, []string{"reason"})
+
+	// Silences counts AlertManager silence outcomes by result: created, blocked
+	// (refused by a guard), error.
+	Silences = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "muthur_silences_total",
+		Help: "AlertManager auto-silence outcomes by result.",
+	}, []string{"result"})
+
 	// Notifications counts delivery attempts by receiver and result: ok, error.
 	Notifications = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "muthur_notifications_total",

@@ -65,6 +65,24 @@ func (m *Message) RelatedSummaries() []string {
 	return out
 }
 
+// ConfidenceLine renders the trust-calibration signal for the analysis, e.g.
+// "high confidence · stated" — so on-call can tell a data-grounded root cause
+// from a confident guess. Empty when the analysis carries no signal.
+func (m *Message) ConfidenceLine() string {
+	if m.Analysis == nil {
+		return ""
+	}
+	conf, ground := m.Analysis.Confidence, m.Analysis.Grounding
+	switch {
+	case conf != "" && ground != "":
+		return conf + " confidence · " + ground
+	case conf != "":
+		return conf + " confidence"
+	default:
+		return ground
+	}
+}
+
 // HasFeedback reports whether feedback links are present.
 func (m *Message) HasFeedback() bool {
 	return m.FeedbackUpURL != "" && m.FeedbackDownURL != ""

@@ -82,6 +82,24 @@ func (c *Correlator) Add(payload *pb.AlertPayload) {
 	)
 }
 
+// Drain flushes every pending bucket immediately and synchronously. Used at
+// shutdown so buffered alerts are not lost when the process exits before their
+// debounce window elapses.
+func (c *Correlator) Drain() {
+	c.mu.Lock()
+	keys := make([]string, 0, len(c.buckets))
+	for k, b := range c.buckets {
+		if b.timer != nil {
+			b.timer.Stop()
+		}
+		keys = append(keys, k)
+	}
+	c.mu.Unlock()
+	for _, k := range keys {
+		c.flushKey(k)
+	}
+}
+
 func (c *Correlator) flushKey(key string) {
 	c.mu.Lock()
 	b := c.buckets[key]

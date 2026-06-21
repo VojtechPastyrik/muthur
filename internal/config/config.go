@@ -12,18 +12,27 @@ import (
 // Notification receivers are NOT configured here — they are loaded from
 // the config file pointed to by ConfigFile.
 type Config struct {
-	Port                   string
-	LogLevel               string
-	AnthropicAPIKey        string
-	AnthropicModel         string
-	Collectors             []CollectorConfig
-	AlertManagerURL        string
-	AlertManagerSilenceOn  bool
-	AlertManagerSilenceDur time.Duration
-	DedupWindowMinutes     int
-	LLMCacheEnabled        bool
-	LLMCacheTTLMinutes     int
-	ConfigFile             string
+	Port            string
+	LogLevel        string
+	AnthropicAPIKey string
+	AnthropicModel  string
+	LLMTimeout      time.Duration
+	Collectors      []CollectorConfig
+
+	// Cost backstop: hard ceilings on LLM calls regardless of cache/dedup/
+	// correlation. A storm of distinct, uncacheable alerts degrades to raw
+	// delivery instead of an unbounded bill once these are hit.
+	LLMMaxCallsPerMinute     int
+	LLMBurst                 int
+	LLMMaxConcurrent         int
+	AlertManagerURL          string
+	AlertManagerSilenceOn    bool
+	AlertManagerSilenceDur   time.Duration
+	AlertManagerSilenceAllow []string
+	DedupWindowMinutes       int
+	LLMCacheEnabled          bool
+	LLMCacheTTLMinutes       int
+	ConfigFile               string
 
 	// Persistence. When RedisURL is set, dedup/cache/feedback state is shared
 	// across replicas and survives restarts; otherwise an in-memory store is
@@ -64,6 +73,24 @@ func Load() (*Config, error) {
 
 	silenceEnabled, _ := strconv.ParseBool(envOr("ALERTMANAGER_SILENCE_ENABLED", "false"))
 
+	var silenceAllow []string
+	if raw := os.Getenv("ALERTMANAGER_SILENCE_ALLOWLIST"); raw != "" {
+		for _, name := range strings.Split(raw, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				silenceAllow = append(silenceAllow, name)
+			}
+		}
+	}
+
+	llmTimeout, err := time.ParseDuration(envOr("LLM_TIMEOUT", "20s"))
+	if err != nil {
+		llmTimeout = 20 * time.Second
+	}
+
+	llmMaxPerMin, _ := strconv.Atoi(envOr("LLM_MAX_CALLS_PER_MINUTE", "60"))
+	llmBurst, _ := strconv.Atoi(envOr("LLM_BURST", "15"))
+	llmMaxConcurrent, _ := strconv.Atoi(envOr("LLM_MAX_CONCURRENT", "8"))
+
 	semanticEnabled, _ := strconv.ParseBool(envOr("SEMANTIC_CACHE_ENABLED", "false"))
 	semanticThreshold, err := strconv.ParseFloat(envOr("SEMANTIC_CACHE_THRESHOLD", "0.95"), 64)
 	if err != nil {
@@ -78,17 +105,22 @@ func Load() (*Config, error) {
 	fewShot, _ := strconv.Atoi(envOr("FEEDBACK_FEW_SHOT", "3"))
 
 	cfg := &Config{
-		Port:                   envOr("PORT", "8080"),
-		LogLevel:               envOr("LOG_LEVEL", "info"),
-		AnthropicAPIKey:        os.Getenv("ANTHROPIC_API_KEY"),
-		AnthropicModel:         envOr("ANTHROPIC_MODEL", "claude-opus-4-5"),
-		AlertManagerURL:        envOr("ALERTMANAGER_URL", "http://alertmanager.monitoring.svc:9093"),
-		AlertManagerSilenceOn:  silenceEnabled,
-		AlertManagerSilenceDur: silenceDur,
-		DedupWindowMinutes:     dedupMin,
-		LLMCacheEnabled:        cacheEnabled,
-		LLMCacheTTLMinutes:     cacheTTL,
-		ConfigFile:             envOr("MUTHUR_CONFIG_FILE", "/config/muthur.yaml"),
+		Port:                     envOr("PORT", "8080"),
+		LogLevel:                 envOr("LOG_LEVEL", "info"),
+		AnthropicAPIKey:          os.Getenv("ANTHROPIC_API_KEY"),
+		AnthropicModel:           envOr("ANTHROPIC_MODEL", "claude-opus-4-5"),
+		LLMTimeout:               llmTimeout,
+		LLMMaxCallsPerMinute:     llmMaxPerMin,
+		LLMBurst:                 llmBurst,
+		LLMMaxConcurrent:         llmMaxConcurrent,
+		AlertManagerURL:          envOr("ALERTMANAGER_URL", "http://alertmanager.monitoring.svc:9093"),
+		AlertManagerSilenceOn:    silenceEnabled,
+		AlertManagerSilenceDur:   silenceDur,
+		AlertManagerSilenceAllow: silenceAllow,
+		DedupWindowMinutes:       dedupMin,
+		LLMCacheEnabled:          cacheEnabled,
+		LLMCacheTTLMinutes:       cacheTTL,
+		ConfigFile:               envOr("MUTHUR_CONFIG_FILE", "/config/muthur.yaml"),
 
 		RedisURL:    os.Getenv("REDIS_URL"),
 		RedisPrefix: envOr("REDIS_PREFIX", "muthur:"),

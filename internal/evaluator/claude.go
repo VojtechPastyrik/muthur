@@ -16,10 +16,18 @@ import (
 
 // Analysis is the structured verdict Claude returns for an alert or incident.
 type Analysis struct {
-	Severity      string `json:"severity"`
-	RootCause     string `json:"root_cause"`
-	Evidence      string `json:"evidence"`
-	Action        string `json:"action"`
+	Severity  string `json:"severity"`
+	RootCause string `json:"root_cause"`
+	Evidence  string `json:"evidence"`
+	Action    string `json:"action"`
+	// Confidence is Claude's self-assessed certainty in the root cause:
+	// "high", "medium", or "low". Surfaced in notifications so on-call can
+	// calibrate trust instead of treating every verdict as equally sure.
+	Confidence string `json:"confidence"`
+	// Grounding is "stated" when the root cause is read directly from the
+	// provided logs/metrics, or "inferred" when Claude is reasoning beyond
+	// what the data literally says. Separates observation from speculation.
+	Grounding     string `json:"grounding"`
 	Silence       bool   `json:"silence"`
 	SilenceReason string `json:"silence_reason,omitempty"`
 }
@@ -35,17 +43,23 @@ type Example struct {
 }
 
 type Evaluator struct {
-	client *anthropic.Client
-	model  string
-	logger *zap.Logger
+	client  *anthropic.Client
+	model   string
+	timeout time.Duration
+	logger  *zap.Logger
 }
 
-func New(apiKey, model string, logger *zap.Logger) *Evaluator {
+// New builds an Evaluator. perCallTimeout bounds each individual Claude API
+// call so a hung connection fails fast and the pipeline falls back to raw
+// alert delivery promptly, rather than tying up the whole pipeline deadline on
+// a single stalled request. A non-positive value disables the per-call bound.
+func New(apiKey, model string, perCallTimeout time.Duration, logger *zap.Logger) *Evaluator {
 	client := anthropic.NewClient(option.WithAPIKey(apiKey))
 	return &Evaluator{
-		client: &client,
-		model:  model,
-		logger: logger,
+		client:  &client,
+		model:   model,
+		timeout: perCallTimeout,
+		logger:  logger,
 	}
 }
 
@@ -76,6 +90,16 @@ func analysisTool() anthropic.ToolParam {
 					"type":        "string",
 					"description": "Recommended immediate action.",
 				},
+				"confidence": map[string]any{
+					"type":        "string",
+					"enum":        []string{"high", "medium", "low"},
+					"description": "Your certainty in the root cause. 'high' only when the logs/metrics state it directly; 'low' when you are guessing from sparse data.",
+				},
+				"grounding": map[string]any{
+					"type":        "string",
+					"enum":        []string{"stated", "inferred"},
+					"description": "'stated' if the root cause is read directly from the provided data; 'inferred' if you are reasoning beyond what the data literally says.",
+				},
 				"silence": map[string]any{
 					"type":        "boolean",
 					"description": "True only if this alert is noise that should be silenced.",
@@ -85,7 +109,7 @@ func analysisTool() anthropic.ToolParam {
 					"description": "Why the alert should be silenced. Only set when silence is true.",
 				},
 			},
-			Required: []string{"severity", "root_cause", "evidence", "action", "silence"},
+			Required: []string{"severity", "root_cause", "evidence", "action", "confidence", "grounding", "silence"},
 		},
 	}
 }
@@ -138,6 +162,15 @@ func (e *Evaluator) run(ctx context.Context, prompt string) (*Analysis, error) {
 }
 
 func (e *Evaluator) call(ctx context.Context, prompt string) (*Analysis, error) {
+	// Bound each attempt independently so a single stalled connection can't
+	// consume the entire pipeline deadline — the LLM enriches, it must never
+	// hold a page hostage.
+	if e.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, e.timeout)
+		defer cancel()
+	}
+
 	tool := analysisTool()
 	message, err := e.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(e.model),

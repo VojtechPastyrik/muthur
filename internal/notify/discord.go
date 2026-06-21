@@ -153,6 +153,9 @@ func buildDiscordEmbed(msg *Message) discordEmbed {
 				Value: truncate(msg.Analysis.Action, 1024),
 			})
 		}
+		if cl := msg.ConfidenceLine(); cl != "" {
+			fields = append(fields, discordEmbedField{Name: "Confidence", Value: cl, Inline: true})
+		}
 	}
 
 	// Correlated incident — list the other alerts in the group.

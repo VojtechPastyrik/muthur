@@ -54,6 +54,14 @@ spec:
               value: {{ .Values.config.logLevel | quote }}
             - name: ANTHROPIC_MODEL
               value: {{ .Values.config.anthropicModel | quote }}
+            - name: LLM_TIMEOUT
+              value: {{ .Values.config.llmTimeout | quote }}
+            - name: LLM_MAX_CALLS_PER_MINUTE
+              value: {{ .Values.config.llmMaxCallsPerMinute | quote }}
+            - name: LLM_BURST
+              value: {{ .Values.config.llmBurst | quote }}
+            - name: LLM_MAX_CONCURRENT
+              value: {{ .Values.config.llmMaxConcurrent | quote }}
             - name: DEDUP_WINDOW_MINUTES
               value: {{ .Values.config.dedupWindowMinutes | quote }}
             - name: ALERTMANAGER_URL
@@ -62,6 +70,8 @@ spec:
               value: {{ .Values.config.alertmanagerSilenceEnabled | quote }}
             - name: ALERTMANAGER_SILENCE_DURATION
               value: {{ .Values.config.alertmanagerSilenceDuration | quote }}
+            - name: ALERTMANAGER_SILENCE_ALLOWLIST
+              value: {{ .Values.config.alertmanagerSilenceAllowlist | quote }}
             - name: MUTHUR_CONFIG_FILE
               value: /config/muthur.yaml
             - name: LLM_CACHE_ENABLED

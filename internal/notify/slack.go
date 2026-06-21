@@ -141,7 +141,10 @@ func buildSlackAttachment(msg *Message) slackAttachment {
 				body += "*Evidence:* " + msg.Analysis.Evidence + "\n"
 			}
 			if msg.Analysis.Action != "" {
-				body += "*Action:* " + msg.Analysis.Action
+				body += "*Action:* " + msg.Analysis.Action + "\n"
+			}
+			if cl := msg.ConfidenceLine(); cl != "" {
+				body += "_" + cl + "_"
 			}
 			if body != "" {
 				blocks = append(blocks, slackBlock{

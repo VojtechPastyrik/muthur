@@ -16,12 +16,12 @@ func TestAnalysisTool_Schema(t *testing.T) {
 	if !ok {
 		t.Fatal("properties is not a map")
 	}
-	for _, field := range []string{"severity", "root_cause", "evidence", "action", "silence", "silence_reason"} {
+	for _, field := range []string{"severity", "root_cause", "evidence", "action", "confidence", "grounding", "silence", "silence_reason"} {
 		if _, ok := props[field]; !ok {
 			t.Errorf("schema missing property %q", field)
 		}
 	}
-	wantRequired := map[string]bool{"severity": true, "root_cause": true, "evidence": true, "action": true, "silence": true}
+	wantRequired := map[string]bool{"severity": true, "root_cause": true, "evidence": true, "action": true, "confidence": true, "grounding": true, "silence": true}
 	if len(tool.InputSchema.Required) != len(wantRequired) {
 		t.Errorf("required = %v, want %d fields", tool.InputSchema.Required, len(wantRequired))
 	}

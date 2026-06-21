@@ -59,10 +59,12 @@ type webhookFeedback struct {
 }
 
 type webhookAI struct {
-	RootCause string `json:"root_cause,omitempty"`
-	Evidence  string `json:"evidence,omitempty"`
-	Action    string `json:"action,omitempty"`
-	Silence   bool   `json:"silence,omitempty"`
+	RootCause  string `json:"root_cause,omitempty"`
+	Evidence   string `json:"evidence,omitempty"`
+	Action     string `json:"action,omitempty"`
+	Confidence string `json:"confidence,omitempty"`
+	Grounding  string `json:"grounding,omitempty"`
+	Silence    bool   `json:"silence,omitempty"`
 }
 
 func (w *Webhook) Send(ctx context.Context, msg *Message) error {
@@ -121,10 +123,12 @@ func buildWebhookPayload(msg *Message) webhookPayload {
 	}
 	if msg.Analysis != nil {
 		wp.Analysis = &webhookAI{
-			RootCause: msg.Analysis.RootCause,
-			Evidence:  msg.Analysis.Evidence,
-			Action:    msg.Analysis.Action,
-			Silence:   msg.Analysis.Silence,
+			RootCause:  msg.Analysis.RootCause,
+			Evidence:   msg.Analysis.Evidence,
+			Action:     msg.Analysis.Action,
+			Confidence: msg.Analysis.Confidence,
+			Grounding:  msg.Analysis.Grounding,
+			Silence:    msg.Analysis.Silence,
 		}
 	}
 	if msg.IsIncident() {

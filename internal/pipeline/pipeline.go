@@ -11,6 +11,7 @@ import (
 	"github.com/VojtechPastyrik/muthur/internal/feedback"
 	"github.com/VojtechPastyrik/muthur/internal/incident"
 	"github.com/VojtechPastyrik/muthur/internal/llmcache"
+	"github.com/VojtechPastyrik/muthur/internal/llmlimit"
 	"github.com/VojtechPastyrik/muthur/internal/metrics"
 	"github.com/VojtechPastyrik/muthur/internal/notify"
 	"github.com/VojtechPastyrik/muthur/internal/routing"
@@ -30,6 +31,7 @@ type Pipeline struct {
 	dedup      *dedup.Deduplicator
 	evaluator  *evaluator.Evaluator
 	cache      *llmcache.Cache
+	limiter    *llmlimit.Limiter
 	router     *routing.Router
 	notifiers  map[string]notify.Notifier
 	silence    *silence.Client
@@ -42,6 +44,7 @@ func New(
 	dd *dedup.Deduplicator,
 	eval *evaluator.Evaluator,
 	cache *llmcache.Cache,
+	limiter *llmlimit.Limiter,
 	router *routing.Router,
 	notifiers map[string]notify.Notifier,
 	silence *silence.Client,
@@ -53,6 +56,7 @@ func New(
 		dedup:     dd,
 		evaluator: eval,
 		cache:     cache,
+		limiter:   limiter,
 		router:    router,
 		notifiers: notifiers,
 		silence:   silence,
@@ -61,6 +65,12 @@ func New(
 	}
 	p.correlator = incident.New(corr.Enabled, corr.WindowSeconds, corr.MaxGroup, p.processIncident, logger)
 	return p
+}
+
+// Drain flushes any buffered correlation buckets synchronously. Call during
+// graceful shutdown before exiting.
+func (p *Pipeline) Drain() {
+	p.correlator.Drain()
 }
 
 // Process is the entry point for a single ingested alert.
@@ -157,6 +167,15 @@ func (p *Pipeline) evaluate(ctx context.Context, payload *pb.AlertPayload) *eval
 	if cached, ok := p.cache.Get(ctx, payload); ok {
 		return cached
 	}
+	// Cost backstop: under a storm of uncacheable alerts, skip the LLM and
+	// deliver the raw alert rather than run up an unbounded bill.
+	if !p.limiter.Acquire() {
+		p.logger.Warn("LLM cost backstop hit, delivering raw alert",
+			zap.String("alert", payload.AlertName),
+		)
+		return nil
+	}
+	defer p.limiter.Release()
 	examples := p.feedback.Examples(ctx, payload)
 	analysis, err := p.evaluator.Evaluate(ctx, payload, examples)
 	if err != nil {
@@ -173,6 +192,14 @@ func (p *Pipeline) evaluate(ctx context.Context, payload *pb.AlertPayload) *eval
 // evaluateIncident asks Claude for one unified analysis across the group.
 // Incidents are not cached — each correlated group is unique.
 func (p *Pipeline) evaluateIncident(ctx context.Context, rep *pb.AlertPayload, alerts []*pb.AlertPayload) *evaluator.Analysis {
+	if !p.limiter.Acquire() {
+		p.logger.Warn("LLM cost backstop hit, delivering raw incident",
+			zap.String("cluster_id", rep.ClusterId),
+			zap.Int("alerts", len(alerts)),
+		)
+		return nil
+	}
+	defer p.limiter.Release()
 	examples := p.feedback.Examples(ctx, rep)
 	analysis, err := p.evaluator.EvaluateIncident(ctx, alerts, examples)
 	if err != nil {

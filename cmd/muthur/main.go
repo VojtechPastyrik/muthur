@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -21,6 +23,7 @@ import (
 	"github.com/VojtechPastyrik/muthur/internal/feedback"
 	"github.com/VojtechPastyrik/muthur/internal/ingest"
 	"github.com/VojtechPastyrik/muthur/internal/llmcache"
+	"github.com/VojtechPastyrik/muthur/internal/llmlimit"
 	"github.com/VojtechPastyrik/muthur/internal/notify"
 	"github.com/VojtechPastyrik/muthur/internal/pipeline"
 	"github.com/VojtechPastyrik/muthur/internal/routing"
@@ -82,7 +85,18 @@ func run() error {
 	logger.Info("state store ready", zap.String("kind", st.Kind()))
 
 	// Evaluator (Claude)
-	eval := evaluator.New(cfg.AnthropicAPIKey, cfg.AnthropicModel, logger)
+	eval := evaluator.New(cfg.AnthropicAPIKey, cfg.AnthropicModel, cfg.LLMTimeout, logger)
+
+	// Cost backstop: hard rate + concurrency ceiling on LLM calls. Nil when
+	// disabled (limits non-positive), in which case the pipeline is unlimited.
+	limiter := llmlimit.New(cfg.LLMMaxCallsPerMinute, cfg.LLMBurst, cfg.LLMMaxConcurrent, logger)
+	if limiter != nil {
+		logger.Info("LLM cost backstop enabled",
+			zap.Int("calls_per_minute", cfg.LLMMaxCallsPerMinute),
+			zap.Int("burst", cfg.LLMBurst),
+			zap.Int("max_concurrent", cfg.LLMMaxConcurrent),
+		)
+	}
 
 	// Dedup
 	dd := dedup.New(cfg.DedupWindowMinutes, st, logger)
@@ -113,11 +127,12 @@ func run() error {
 		cfg.AlertManagerURL,
 		cfg.AlertManagerSilenceDur,
 		cfg.AlertManagerSilenceOn,
+		cfg.AlertManagerSilenceAllow,
 		logger,
 	)
 
 	// Pipeline
-	pipe := pipeline.New(dd, eval, cache, router, notifiers, silenceClient, fb,
+	pipe := pipeline.New(dd, eval, cache, limiter, router, notifiers, silenceClient, fb,
 		pipeline.CorrelationConfig{
 			Enabled:       cfg.CorrelationEnabled,
 			WindowSeconds: cfg.CorrelationWindowSeconds,
@@ -150,8 +165,48 @@ func run() error {
 	})
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
-	logger.Info("starting muthur", zap.String("addr", addr))
-	return http.ListenAndServe(addr, r)
+	srv := &http.Server{Addr: addr, Handler: r}
+
+	// Listen in the background so the main goroutine can wait for a shutdown
+	// signal and drain in-flight work.
+	serveErr := make(chan error, 1)
+	go func() {
+		logger.Info("starting muthur", zap.String("addr", addr))
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serveErr <- err
+		}
+	}()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	select {
+	case err := <-serveErr:
+		return fmt.Errorf("http server: %w", err)
+	case <-ctx.Done():
+	}
+
+	logger.Info("shutdown signal received, draining")
+	shCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Stop accepting new requests, flush buffered incidents, then wait for
+	// in-flight alert processing to finish (bounded by shCtx).
+	_ = srv.Shutdown(shCtx)
+	pipe.Drain()
+
+	done := make(chan struct{})
+	go func() {
+		handler.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		logger.Info("drained cleanly")
+	case <-shCtx.Done():
+		logger.Warn("drain timed out, exiting with in-flight work")
+	}
+	return nil
 }
 
 // newStore selects the persistence backend. A configured REDIS_URL gives a
