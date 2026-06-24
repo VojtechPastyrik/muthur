@@ -9,6 +9,7 @@ import (
 	"github.com/VojtechPastyrik/muthur/internal/dedup"
 	"github.com/VojtechPastyrik/muthur/internal/evaluator"
 	"github.com/VojtechPastyrik/muthur/internal/feedback"
+	"github.com/VojtechPastyrik/muthur/internal/history"
 	"github.com/VojtechPastyrik/muthur/internal/incident"
 	"github.com/VojtechPastyrik/muthur/internal/llmcache"
 	"github.com/VojtechPastyrik/muthur/internal/llmlimit"
@@ -36,6 +37,8 @@ type Pipeline struct {
 	notifiers  map[string]notify.Notifier
 	silence    *silence.Client
 	feedback   *feedback.Manager
+	history    *history.Store
+	evidence   notify.EvidenceConfig
 	correlator *incident.Correlator
 	logger     *zap.Logger
 }
@@ -49,6 +52,8 @@ func New(
 	notifiers map[string]notify.Notifier,
 	silence *silence.Client,
 	fb *feedback.Manager,
+	hist *history.Store,
+	evidence notify.EvidenceConfig,
 	corr CorrelationConfig,
 	logger *zap.Logger,
 ) *Pipeline {
@@ -61,6 +66,8 @@ func New(
 		notifiers: notifiers,
 		silence:   silence,
 		feedback:  fb,
+		history:   hist,
+		evidence:  evidence,
 		logger:    logger,
 	}
 	p.correlator = incident.New(corr.Enabled, corr.WindowSeconds, corr.MaxGroup, p.processIncident, logger)
@@ -109,8 +116,10 @@ func (p *Pipeline) processSingle(payload *pb.AlertPayload) {
 
 	analysis := p.evaluate(ctx, payload)
 	p.maybeSilence(ctx, payload, analysis)
+	p.history.Record(ctx, payload, analysis, []*pb.AlertPayload{payload})
 
 	msg := notify.FormatMessage(payload, analysis)
+	notify.AttachEvidence(msg, payload, p.evidence)
 	p.attachFeedback(ctx, payload, analysis, msg)
 	p.deliver(ctx, payload, msg)
 }
@@ -133,7 +142,9 @@ func (p *Pipeline) processIncident(alerts []*pb.AlertPayload) {
 	if len(alerts) == 1 {
 		analysis := p.evaluate(ctx, rep)
 		p.maybeSilence(ctx, rep, analysis)
+		p.history.Record(ctx, rep, analysis, alerts)
 		msg := notify.FormatMessage(rep, analysis)
+		notify.AttachEvidence(msg, rep, p.evidence)
 		p.attachFeedback(ctx, rep, analysis, msg)
 		p.deliver(ctx, rep, msg)
 		metrics.Incidents.WithLabelValues(metrics.IncidentSizeBucket(1)).Inc()
@@ -142,8 +153,10 @@ func (p *Pipeline) processIncident(alerts []*pb.AlertPayload) {
 
 	analysis := p.evaluateIncident(ctx, rep, alerts)
 	p.maybeSilence(ctx, rep, analysis)
+	p.history.Record(ctx, rep, analysis, alerts)
 
 	msg := notify.FormatIncidentMessage(rep, alerts, analysis)
+	notify.AttachEvidence(msg, rep, p.evidence)
 	p.attachFeedback(ctx, rep, analysis, msg)
 	p.deliver(ctx, rep, msg)
 

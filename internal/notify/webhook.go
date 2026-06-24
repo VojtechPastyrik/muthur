@@ -42,6 +42,8 @@ type webhookPayload struct {
 	FiredAt       string           `json:"fired_at,omitempty"`
 	GrafanaURL    string           `json:"grafana_url,omitempty"`
 	Analysis      *webhookAI       `json:"analysis,omitempty"`
+	KeyMetrics    []string         `json:"key_metrics,omitempty"`
+	LogExcerpt    []string         `json:"log_excerpt,omitempty"`
 	Labels        map[string]any   `json:"labels,omitempty"`
 	RelatedAlerts []webhookRelated `json:"related_alerts,omitempty"`
 	Feedback      *webhookFeedback `json:"feedback,omitempty"`
@@ -131,6 +133,8 @@ func buildWebhookPayload(msg *Message) webhookPayload {
 			Silence:    msg.Analysis.Silence,
 		}
 	}
+	wp.KeyMetrics = msg.EvidenceMetrics
+	wp.LogExcerpt = msg.EvidenceLogs
 	if msg.IsIncident() {
 		for _, a := range msg.Incident.Alerts {
 			if a == msg.Payload {

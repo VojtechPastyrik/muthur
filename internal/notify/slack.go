@@ -159,6 +159,23 @@ func buildSlackAttachment(msg *Message) slackAttachment {
 			})
 		}
 
+		// Evidence — curated raw data behind the alert. Useful even when there
+		// is no analysis (Claude unavailable).
+		if msg.HasEvidence() {
+			var ev strings.Builder
+			ev.WriteString("*📊 Evidence*")
+			if len(msg.EvidenceMetrics) > 0 {
+				ev.WriteString("\n" + strings.Join(msg.EvidenceMetrics, "  ·  "))
+			}
+			if len(msg.EvidenceLogs) > 0 {
+				ev.WriteString("\n```\n" + strings.Join(msg.EvidenceLogs, "\n") + "\n```")
+			}
+			blocks = append(blocks, slackBlock{
+				Type: "section",
+				Text: &slackText{Type: "mrkdwn", Text: truncate(ev.String(), 3000)},
+			})
+		}
+
 		// Correlated incident — list the other alerts in the group.
 		if related := msg.RelatedSummaries(); len(related) > 0 {
 			body := fmt.Sprintf("*Related alerts (%d):*\n• %s", len(related), strings.Join(related, "\n• "))

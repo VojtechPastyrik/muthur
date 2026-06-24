@@ -84,6 +84,12 @@ var (
 		Help: "Operator feedback verdicts on Claude analyses.",
 	}, []string{"verdict"})
 
+	// IncidentsRecorded counts incident records persisted to history.
+	IncidentsRecorded = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "muthur_incidents_recorded_total",
+		Help: "Incident records persisted to history.",
+	})
+
 	// PipelineInFlight tracks alerts/incidents currently being processed.
 	PipelineInFlight = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "muthur_pipeline_in_flight",

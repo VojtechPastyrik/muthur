@@ -118,6 +118,12 @@ func buildPagerDutyEvent(routingKey string, msg *Message) map[string]any {
 			customDetails["grounding"] = msg.Analysis.Grounding
 		}
 	}
+	if len(msg.EvidenceMetrics) > 0 {
+		customDetails["key_metrics"] = msg.EvidenceMetrics
+	}
+	if len(msg.EvidenceLogs) > 0 {
+		customDetails["log_excerpt"] = msg.EvidenceLogs
+	}
 	if msg.GrafanaURL != "" {
 		customDetails["grafana"] = msg.GrafanaURL
 	}

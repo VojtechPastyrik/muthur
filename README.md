@@ -46,6 +46,8 @@ flowchart TD
 - **LLM never blocks delivery** — each Claude call is bounded by `LLM_TIMEOUT`; on timeout/error the raw alert is delivered without enrichment instead of holding the page
 - **Trust calibration** — every analysis carries a `confidence` (high/medium/low) and `grounding` (stated vs inferred) signal, surfaced in notifications so on-call can tell a data-grounded root cause from a confident guess
 - **Cost backstop** — hard rate + concurrency ceiling on LLM calls; a pathological alert storm degrades to raw delivery rather than an unbounded API bill
+- **Evidence in alerts** — every notification carries a tail of the redacted logs + key metric facts behind the alert, so it stays actionable even when Claude is unavailable (the data is already in the forwarded payload)
+- **Incident history** — each analysed incident is persisted under a stable ID (the same ID as its feedback verdict), queryable in Grafana via the structured `incident recorded` log; the foundation for later read paths (e.g. an MCP server)
 - **Grafana deep links** — every notification includes an Explore link pre-filtered to the alert's namespace and pod
 - **No emoji ever** — plain text output only
 
@@ -79,6 +81,10 @@ Beyond the existing settings, the new features add:
 | `CORRELATION_MAX_GROUP` | `25` | Max alerts per incident |
 | `MUTHUR_PUBLIC_URL` | _(empty)_ | Externally reachable base URL; required for feedback links |
 | `FEEDBACK_FEW_SHOT` | `3` | Recent verdicts replayed into prompts |
+| `INCIDENT_HISTORY_ENABLED` | `true` | Persist each analysed incident under a stable ID |
+| `INCIDENT_TTL` | `720h` | How long incident records are kept |
+| `NOTIFY_EVIDENCE_ENABLED` | `true` | Attach redacted log tail + key metrics to notifications |
+| `NOTIFY_LOG_LINES` | `8` | Max redacted log lines shown as evidence |
 
 ## Prerequisites
 

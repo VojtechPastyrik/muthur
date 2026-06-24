@@ -74,6 +74,14 @@ spec:
               value: {{ .Values.config.alertmanagerSilenceAllowlist | quote }}
             - name: MUTHUR_CONFIG_FILE
               value: /config/muthur.yaml
+            - name: INCIDENT_HISTORY_ENABLED
+              value: {{ .Values.config.incidentHistoryEnabled | quote }}
+            - name: INCIDENT_TTL
+              value: {{ .Values.config.incidentTtl | quote }}
+            - name: NOTIFY_EVIDENCE_ENABLED
+              value: {{ .Values.config.notifyEvidenceEnabled | quote }}
+            - name: NOTIFY_LOG_LINES
+              value: {{ .Values.config.notifyLogLines | quote }}
             - name: LLM_CACHE_ENABLED
               value: {{ .Values.config.llmCacheEnabled | quote }}
             - name: LLM_CACHE_TTL_MINUTES

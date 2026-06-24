@@ -138,6 +138,20 @@ func buildTelegramHTML(msg *Message) string {
 		b.WriteString("\n")
 	}
 
+	// Evidence — curated raw data, shown even without analysis (firing only).
+	if !msg.Resolved() && msg.HasEvidence() {
+		b.WriteString("\n<b>📊 Evidence</b>\n")
+		if len(msg.EvidenceMetrics) > 0 {
+			b.WriteString(tgEscape(strings.Join(msg.EvidenceMetrics, "  ·  ")))
+			b.WriteString("\n")
+		}
+		if len(msg.EvidenceLogs) > 0 {
+			b.WriteString("<pre>")
+			b.WriteString(tgEscape(strings.Join(msg.EvidenceLogs, "\n")))
+			b.WriteString("</pre>\n")
+		}
+	}
+
 	// Correlated incident — list the other alerts in the group.
 	if related := msg.RelatedSummaries(); len(related) > 0 {
 		b.WriteString(fmt.Sprintf("\n<b>Related alerts (%d):</b>\n", len(related)))

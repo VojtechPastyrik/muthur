@@ -20,6 +20,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/VojtechPastyrik/muthur/internal/alertkey"
 	"github.com/VojtechPastyrik/muthur/internal/evaluator"
 	"github.com/VojtechPastyrik/muthur/internal/metrics"
 	"github.com/VojtechPastyrik/muthur/internal/store"
@@ -169,11 +170,10 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		verdict, pending.AlertName)
 }
 
+// id is the shared per-alert identifier; the same value keys the incident
+// record in internal/history, so feedback and incident cross-reference.
 func (m *Manager) id(payload *pb.AlertPayload) string {
-	raw := fmt.Sprintf("%s|%s|%s|%s|%d",
-		payload.ClusterId, payload.AlertName, payload.Namespace, payload.PodName, payload.FiredAt)
-	h := sha256.Sum256([]byte(raw))
-	return fmt.Sprintf("%x", h)[:16]
+	return alertkey.ID(payload)
 }
 
 func alertHash(name string) string {

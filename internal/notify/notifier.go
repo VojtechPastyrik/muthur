@@ -31,6 +31,18 @@ type Message struct {
 	// disabled (no public URL configured).
 	FeedbackUpURL   string
 	FeedbackDownURL string
+
+	// EvidenceLogs / EvidenceMetrics are curated, already-redacted excerpts of
+	// the raw data behind the alert (a tail of log lines, a few key metric
+	// facts). Populated by AttachEvidence; surfaced by notifiers so the alert is
+	// useful even when Claude produced no analysis.
+	EvidenceLogs    []string
+	EvidenceMetrics []string
+}
+
+// HasEvidence reports whether any curated evidence is attached.
+func (m *Message) HasEvidence() bool {
+	return len(m.EvidenceLogs) > 0 || len(m.EvidenceMetrics) > 0
 }
 
 // Incident groups the alerts that were correlated into a single notification.

@@ -158,6 +158,22 @@ func buildDiscordEmbed(msg *Message) discordEmbed {
 		}
 	}
 
+	// Evidence — curated raw data behind the alert, useful even without analysis.
+	if msg.HasEvidence() {
+		var ev strings.Builder
+		if len(msg.EvidenceMetrics) > 0 {
+			ev.WriteString(strings.Join(msg.EvidenceMetrics, "  ·  "))
+			ev.WriteString("\n")
+		}
+		if len(msg.EvidenceLogs) > 0 {
+			ev.WriteString("```\n" + strings.Join(msg.EvidenceLogs, "\n") + "\n```")
+		}
+		fields = append(fields, discordEmbedField{
+			Name:  "📊 Evidence",
+			Value: truncate(ev.String(), 1024),
+		})
+	}
+
 	// Correlated incident — list the other alerts in the group.
 	if related := msg.RelatedSummaries(); len(related) > 0 {
 		fields = append(fields, discordEmbedField{

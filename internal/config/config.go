@@ -54,6 +54,16 @@ type Config struct {
 	// Feedback. PublicURL must be set for feedback links to be emitted.
 	PublicURL       string
 	FeedbackFewShot int
+
+	// Incident history persists each analysed incident under a stable ID for
+	// later querying (Grafana, future MCP). Foundational and cheap; on by default.
+	IncidentHistoryEnabled bool
+	IncidentTTL            time.Duration
+
+	// Evidence attaches curated redacted log lines + key metric facts to each
+	// notification, so the alert is useful even when Claude is unavailable.
+	EvidenceEnabled  bool
+	EvidenceLogLines int
 }
 
 type CollectorConfig struct {
@@ -104,6 +114,14 @@ func Load() (*Config, error) {
 
 	fewShot, _ := strconv.Atoi(envOr("FEEDBACK_FEW_SHOT", "3"))
 
+	historyEnabled, _ := strconv.ParseBool(envOr("INCIDENT_HISTORY_ENABLED", "true"))
+	incidentTTL, err := time.ParseDuration(envOr("INCIDENT_TTL", "720h"))
+	if err != nil {
+		incidentTTL = 720 * time.Hour
+	}
+	evidenceEnabled, _ := strconv.ParseBool(envOr("NOTIFY_EVIDENCE_ENABLED", "true"))
+	evidenceLogLines, _ := strconv.Atoi(envOr("NOTIFY_LOG_LINES", "8"))
+
 	cfg := &Config{
 		Port:                     envOr("PORT", "8080"),
 		LogLevel:                 envOr("LOG_LEVEL", "info"),
@@ -135,6 +153,11 @@ func Load() (*Config, error) {
 
 		PublicURL:       os.Getenv("MUTHUR_PUBLIC_URL"),
 		FeedbackFewShot: fewShot,
+
+		IncidentHistoryEnabled: historyEnabled,
+		IncidentTTL:            incidentTTL,
+		EvidenceEnabled:        evidenceEnabled,
+		EvidenceLogLines:       evidenceLogLines,
 	}
 
 	// Load collector tokens from COLLECTOR_TOKENS env (format: "clusterId:token,clusterId:token")

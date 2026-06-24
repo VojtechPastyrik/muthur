@@ -144,6 +144,18 @@ config:
   alertmanagerSilenceAllowlist: ""
   logLevel: info
 
+  # --- Incident history ---
+  # Persist each analysed incident under a stable ID (queryable in Grafana via
+  # the "incident recorded" log; foundation for future read paths). Cheap, on.
+  incidentHistoryEnabled: true
+  incidentTtl: 720h
+  # --- Evidence in notifications ---
+  # Attach a tail of redacted log lines + key metric facts to each alert, so it
+  # stays useful even when Claude is unavailable (the data is already in the
+  # forwarded payload — this only surfaces it).
+  notifyEvidenceEnabled: true
+  notifyLogLines: 8
+
   # --- LLM analysis cache ---
   llmCacheEnabled: true
   llmCacheTtlMinutes: 30

@@ -21,6 +21,7 @@ import (
 	"github.com/VojtechPastyrik/muthur/internal/embed"
 	"github.com/VojtechPastyrik/muthur/internal/evaluator"
 	"github.com/VojtechPastyrik/muthur/internal/feedback"
+	"github.com/VojtechPastyrik/muthur/internal/history"
 	"github.com/VojtechPastyrik/muthur/internal/ingest"
 	"github.com/VojtechPastyrik/muthur/internal/llmcache"
 	"github.com/VojtechPastyrik/muthur/internal/llmlimit"
@@ -111,6 +112,13 @@ func run() error {
 	cache := llmcache.New(cfg.LLMCacheEnabled, cfg.LLMCacheTTLMinutes, st, embedder,
 		cfg.SemanticCacheEnabled, cfg.SemanticThreshold, logger)
 
+	// Incident history (foundation for Grafana queries / future MCP).
+	var hist *history.Store
+	if cfg.IncidentHistoryEnabled {
+		hist = history.New(st, cfg.IncidentTTL, logger)
+		logger.Info("incident history enabled", zap.Duration("ttl", cfg.IncidentTTL))
+	}
+
 	// Feedback loop
 	fb := feedback.New(st, cfg.PublicURL, cfg.FeedbackFewShot, logger)
 	if fb.LinksEnabled() {
@@ -132,7 +140,8 @@ func run() error {
 	)
 
 	// Pipeline
-	pipe := pipeline.New(dd, eval, cache, limiter, router, notifiers, silenceClient, fb,
+	pipe := pipeline.New(dd, eval, cache, limiter, router, notifiers, silenceClient, fb, hist,
+		notify.EvidenceConfig{Enabled: cfg.EvidenceEnabled, LogLines: cfg.EvidenceLogLines},
 		pipeline.CorrelationConfig{
 			Enabled:       cfg.CorrelationEnabled,
 			WindowSeconds: cfg.CorrelationWindowSeconds,
