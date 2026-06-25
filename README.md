@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://assets.pastyrik.dev/images/muthur.png" width="200" alt="muthur">
+  <img src="docs/logo.png" width="200" alt="muthur">
 </p>
 
 # muthur
@@ -9,6 +9,11 @@ AI-powered Kubernetes monitoring server. Named after MU/TH/UR 6000 from Alien.
 Receives enriched alert payloads from [muthur-collector](https://github.com/VojtechPastyrik/muthur-collector) instances, evaluates them with Claude, deduplicates, and routes notifications to configured receivers.
 
 <sub>**Keywords:** AI-powered Kubernetes alerting · Claude / Anthropic AlertManager integration · LLM incident root cause analysis · AIOps · SRE on-call · observability · self-hosted · Prometheus · Loki · Grafana · Discord / Slack / Telegram / PagerDuty / email notifications.</sub>
+
+<p align="center">
+  <img src="docs/sample-alert.png" width="560" alt="A real Kubernetes alert analysed by muthur: root cause, evidence, key metrics and redacted logs in Slack">
+</p>
+<p align="center"><sub>A real <code>KubePodCrashLooping</code> alert — root cause, evidence, key metrics and the redacted logs behind it. Note the IP redacted to <code>[ip]</code> in-cluster, before anything reached the LLM.</sub></p>
 
 ```mermaid
 flowchart TD
