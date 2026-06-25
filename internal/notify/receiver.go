@@ -28,6 +28,8 @@ var factories = map[string]Factory{
 	"slack":     newSlack,
 	"pagerduty": newPagerDuty,
 	"webhook":   newWebhook,
+	"smtp":      newSMTP,
+	"email":     newSMTP,
 }
 
 // BuildReceivers constructs notifier instances from the given receiver configs.
