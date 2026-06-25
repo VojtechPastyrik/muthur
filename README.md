@@ -8,6 +8,8 @@ AI-powered Kubernetes monitoring server. Named after MU/TH/UR 6000 from Alien.
 
 Receives enriched alert payloads from [muthur-collector](https://github.com/VojtechPastyrik/muthur-collector) instances, evaluates them with Claude, deduplicates, and routes notifications to configured receivers.
 
+<sub>**Keywords:** AI-powered Kubernetes alerting · Claude / Anthropic AlertManager integration · LLM incident root cause analysis · AIOps · SRE on-call · observability · self-hosted · Prometheus · Loki · Grafana · Discord / Slack / Telegram / PagerDuty / email notifications.</sub>
+
 ```mermaid
 flowchart TD
     subgraph Clusters
