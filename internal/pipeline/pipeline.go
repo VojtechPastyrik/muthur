@@ -30,7 +30,7 @@ type CorrelationConfig struct {
 
 type Pipeline struct {
 	dedup      *dedup.Deduplicator
-	evaluator  *evaluator.Evaluator
+	evaluator  evaluator.Analyzer
 	cache      *llmcache.Cache
 	limiter    *llmlimit.Limiter
 	router     *routing.Router
@@ -45,7 +45,7 @@ type Pipeline struct {
 
 func New(
 	dd *dedup.Deduplicator,
-	eval *evaluator.Evaluator,
+	eval evaluator.Analyzer,
 	cache *llmcache.Cache,
 	limiter *llmlimit.Limiter,
 	router *routing.Router,

@@ -85,8 +85,24 @@ func run() error {
 	defer st.Close()
 	logger.Info("state store ready", zap.String("kind", st.Kind()))
 
-	// Evaluator (Claude)
-	eval := evaluator.New(cfg.AnthropicAPIKey, cfg.AnthropicModel, cfg.LLMTimeout, logger)
+	// Evaluator: provider-agnostic LLM backend (Anthropic by default).
+	eval, err := evaluator.New(evaluator.Config{
+		Provider:    cfg.LLMProvider,
+		Model:       cfg.LLMModel,
+		BaseURL:     cfg.LLMBaseURL,
+		APIKey:      cfg.LLMAPIKey,
+		SchemaMode:  cfg.LLMSchemaMode,
+		Temperature: cfg.LLMTemperature,
+		MaxRetries:  cfg.LLMMaxRetries,
+		Timeout:     cfg.LLMTimeout,
+	}, logger)
+	if err != nil {
+		return fmt.Errorf("init evaluator: %w", err)
+	}
+	logger.Info("LLM provider ready",
+		zap.String("provider", eval.Name()),
+		zap.String("model", cfg.LLMModel),
+	)
 
 	// Cost backstop: hard rate + concurrency ceiling on LLM calls. Nil when
 	// disabled (limits non-positive), in which case the pipeline is unlimited.

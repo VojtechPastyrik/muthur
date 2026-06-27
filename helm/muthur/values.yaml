@@ -120,6 +120,59 @@ routing:
 
 config:
   anthropicModel: claude-opus-4-5
+
+  # --- LLM provider ---
+  # Anthropic (forced tool-use) is the default and best-supported backend: it
+  # gives the most reliable structured output. An OpenAI-compatible endpoint
+  # (OpenAI, Ollama, vLLM, LM Studio, OpenRouter, Groq, Together, ...) is also
+  # supported via base_url + model — structured-output reliability there varies
+  # by model. With these defaults behaviour is identical to before.
+  llm:
+    # "anthropic" or "openai-compatible".
+    provider: anthropic
+    # Model identifier. Empty selects the provider default (Anthropic uses
+    # anthropicModel above). Required for openai-compatible.
+    model: ""
+    # Endpoint for openai-compatible (e.g. http://ollama.ai.svc:11434/v1).
+    baseUrl: ""
+    # "schema" (JSON Schema response_format), "json-object", or "auto"
+    # (try schema, fall back to json-object if the endpoint rejects it).
+    schemaMode: auto
+    # 0 maximises structured-output determinism on small models.
+    temperature: "0"
+    # Corrective structured-output retries before degrading to raw delivery.
+    maxRetries: 1
+    # Secret key holding the LLM API key. Mounted as a FILE at
+    # /secrets/llm/api-key (never a plain env var). Kept as ANTHROPIC_API_KEY so
+    # existing Secret/ExternalSecret data is unchanged; the slot is provider-
+    # neutral — for an OpenAI-compatible provider store that key in this same
+    # slot. Set to "" for keyless local endpoints (e.g. Ollama).
+    apiKeySecretKey: ANTHROPIC_API_KEY
+
+  # --- Provider examples (copy into the llm block above) ---
+  # (a) Default Anthropic (no changes needed):
+  #   llm:
+  #     provider: anthropic
+  #     apiKeySecretKey: ANTHROPIC_API_KEY
+  #
+  # (b) Ollama, no API key (self-hosted, structured output best-effort):
+  #   llm:
+  #     provider: openai-compatible
+  #     model: qwen2.5
+  #     baseUrl: http://ollama.ai.svc:11434/v1
+  #     schemaMode: auto
+  #     apiKeySecretKey: ""        # keyless
+  #
+  # (c) OpenAI with a file-mounted key:
+  #   llm:
+  #     provider: openai-compatible
+  #     model: gpt-4o-mini
+  #     baseUrl: https://api.openai.com/v1
+  #     schemaMode: schema
+  #     apiKeySecretKey: ANTHROPIC_API_KEY   # reuse the slot; store the OpenAI key there
+  #   externalSecrets:
+  #     llmApiKeyProperty: openai-api-key    # vault property to read it from
+
   dedupWindowMinutes: 15
   # Per-call Claude timeout. Bounds how long a single (possibly hung) API call
   # can delay a page before muthur falls back to delivering the raw alert. The
@@ -199,6 +252,10 @@ externalSecrets:
   secretStoreKind: ClusterSecretStore
   remoteSecretPath: muthur/prod
   refreshInterval: 1h
+  # Remote-store property that holds the LLM API key. Fetched into the Secret
+  # key named by config.llm.apiKeySecretKey and mounted as a file. Default suits
+  # the Anthropic key; override for an OpenAI-compatible provider.
+  llmApiKeyProperty: anthropic-api-key
   collectorTokenKeys:
     - collector-token-cluster-home
     - collector-token-cluster-vps
@@ -215,6 +272,10 @@ externalSecrets:
 
 devSecrets:
   enabled: false
+  # LLM API key for local dev, written into the Secret key named by
+  # config.llm.apiKeySecretKey. llmApiKey takes precedence; anthropicApiKey is
+  # kept as a backward-compatible alias. Leave both empty for keyless endpoints.
+  llmApiKey: ""
   anthropicApiKey: ""
   collectorTokens:
     - clusterId: cluster-home

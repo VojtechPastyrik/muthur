@@ -31,24 +31,51 @@ var (
 		Help: "LLM analysis cache lookups by result.",
 	}, []string{"result"})
 
-	// LLMCalls counts Claude API calls by result: ok, error.
+	// LLMCalls counts LLM evaluations by result (ok, error) and by the backend
+	// that served them (provider, model), so cost and reliability can be broken
+	// down per provider when more than one is in play.
 	LLMCalls = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "muthur_llm_calls_total",
-		Help: "Claude API evaluations by result.",
-	}, []string{"result"})
+		Help: "LLM evaluations by result, provider, and model.",
+	}, []string{"result", "provider", "model"})
 
-	// LLMCallDuration tracks end-to-end Claude evaluation latency.
-	LLMCallDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+	// LLMCallDuration tracks end-to-end LLM evaluation latency, labelled by the
+	// serving provider and model.
+	LLMCallDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "muthur_llm_call_duration_seconds",
-		Help:    "Claude evaluation latency including retries.",
+		Help:    "LLM evaluation latency including retries, by provider and model.",
 		Buckets: []float64{0.5, 1, 2, 5, 10, 20, 30, 60},
-	})
+	}, []string{"provider", "model"})
 
-	// LLMTokens counts Claude token usage by direction: input, output.
+	// LLMTokens counts LLM token usage by direction (input, output), provider,
+	// and model.
 	LLMTokens = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "muthur_llm_tokens_total",
-		Help: "Claude token usage by direction.",
-	}, []string{"direction"})
+		Help: "LLM token usage by direction, provider, and model.",
+	}, []string{"direction", "provider", "model"})
+
+	// LLMValidationFailures counts LLM outputs that failed canonical-schema
+	// validation, by provider and model. A non-zero rate means a model is
+	// struggling to honour the structured-output contract.
+	LLMValidationFailures = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "muthur_llm_validation_failures_total",
+		Help: "LLM outputs that failed canonical-schema validation, by provider and model.",
+	}, []string{"provider", "model"})
+
+	// LLMRetries counts corrective retries issued after a validation failure,
+	// by provider and model.
+	LLMRetries = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "muthur_llm_retries_total",
+		Help: "Corrective structured-output retries, by provider and model.",
+	}, []string{"provider", "model"})
+
+	// LLMDegraded counts evaluations that exhausted their corrective retries and
+	// degraded to raw delivery, by provider and model. This is the honest
+	// fallback — never a silent markdown/JSON parse.
+	LLMDegraded = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "muthur_llm_degraded_total",
+		Help: "Evaluations degraded to raw delivery after structured-output retries, by provider and model.",
+	}, []string{"provider", "model"})
 
 	// LLMThrottled counts LLM evaluations skipped by the cost backstop, by
 	// reason: rate (calls-per-minute ceiling) or concurrency (in-flight cap).

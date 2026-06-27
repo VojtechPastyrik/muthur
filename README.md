@@ -39,7 +39,7 @@ flowchart TD
 
 ## Features
 
-- **Claude-powered root cause analysis** — structured output via forced tool-use (no fragile markdown-JSON parsing), with evidence and recommended action
+- **Claude-powered root cause analysis** — structured output via forced tool-use (no fragile markdown-JSON parsing), with evidence and recommended action. Anthropic/Claude is the default and best-supported backend; OpenAI-compatible endpoints (incl. self-hosted Ollama) are also supported — see [LLM providers](#llm-providers)
 - **Alert correlation / incident grouping** — alerts that fire close together (same cluster+namespace, or same node) are grouped into one incident: one Claude call, one notification, instead of one per alert. Cuts alert-storm fatigue. Opt-in via `correlationEnabled`.
 - **Persistent state (Redis/Dragonfly)** — dedup window, analysis cache, and feedback survive restarts and are shared across replicas when `redis.url` is set; falls back to an in-memory store otherwise
 - **Semantic LLM cache** — reuses a prior analysis for a *near-duplicate* alert (same root cause, different pod) via a local in-process embedder — no external embeddings call, so alert data never leaves the cluster. Opt-in via `semanticCacheEnabled`.
@@ -59,6 +59,54 @@ flowchart TD
 - **Grafana deep links** — every notification includes an Explore link pre-filtered to the alert's namespace and pod
 - **No emoji ever** — plain text output only
 
+## LLM providers
+
+MUTHUR's analysis runs through a provider abstraction. Two backends are supported:
+
+- **Anthropic / Claude (default, recommended).** Uses forced `tool_use`: the model
+  is required to emit its verdict as a single tool call whose input is validated
+  against the analysis schema before it reaches MUTHUR. This is the most reliable
+  way to guarantee structured output and is the best-supported backend. With no
+  new configuration, MUTHUR behaves exactly as before.
+- **OpenAI-compatible (optional).** One implementation covering OpenAI, Ollama,
+  vLLM, LM Studio, OpenRouter, Groq, Together, and any other endpoint that speaks
+  the OpenAI Chat Completions API — you only vary `LLM_BASE_URL` and `LLM_MODEL`.
+  It prefers JSON-Schema structured outputs (`response_format`) and falls back to
+  JSON-object mode for endpoints that don't support schemas. Works against a local
+  Ollama endpoint (`http://<host>:11434/v1`) with no API key.
+
+**Structured-output guarantee (honest version).** The typed analysis contract is
+enforced **in MUTHUR**, not delegated to the model. Every provider maps a single
+canonical JSON Schema onto its native mechanism, and after every call the output
+is validated against that schema. On failure MUTHUR retries once with a corrective
+instruction (`LLM_MAX_RETRIES`); if it still fails it **degrades to raw delivery**
+(the same path used when Claude is unavailable) — a malformed response never reaches
+a fragile markdown/JSON parser.
+
+**Capability gating.** If a configured model/endpoint cannot guarantee structured
+output (json-object mode, or an endpoint that rejected the schema), results are
+treated as best-effort and lean entirely on validate-retry-degrade. Reliability
+therefore varies by model: large, tool-use-capable models hold the contract
+comfortably; very small local models will trip the degrade path more often. Watch
+`muthur_llm_degraded_total{provider,model}` — a high rate means that model can't
+hold the structured-output contract and should go back to Anthropic. As a rough
+floor, Qwen2.5 7B / Llama 3.1 8B and up produce reliable JSON; smaller models are
+hit-or-miss.
+
+**Secrets.** API keys are read from a mounted file (`LLM_API_KEY_FILE`), never a
+plain `*_API_KEY` env var. The legacy `ANTHROPIC_API_KEY` env is still honoured for
+backward compatibility, but the file form is preferred going forward. Local keyless
+endpoints (Ollama) need no key at all.
+
+Quick switch to a local Ollama model:
+
+```bash
+LLM_PROVIDER=openai-compatible
+LLM_MODEL=qwen2.5
+LLM_BASE_URL=http://localhost:11434/v1
+# no API key needed
+```
+
 ### HTTP endpoints
 
 | Method | Path        | Purpose                                                        |
@@ -74,7 +122,14 @@ Beyond the existing settings, the new features add:
 
 | Env var | Default | Purpose |
 |---------|---------|---------|
-| `LLM_TIMEOUT` | `20s` | Per-call Claude deadline; on timeout the raw alert is delivered unenriched |
+| `LLM_PROVIDER` | `anthropic` | `anthropic` or `openai-compatible` |
+| `LLM_MODEL` | _(provider default)_ | Model identifier; required for `openai-compatible` |
+| `LLM_BASE_URL` | _(empty)_ | Override endpoint (Ollama/vLLM/OpenRouter/…); required for `openai-compatible` |
+| `LLM_API_KEY_FILE` | _(empty)_ | Path to a file holding the API key (mounted Secret). Empty allowed for local keyless endpoints; falls back to `ANTHROPIC_API_KEY` |
+| `LLM_SCHEMA_MODE` | `auto` | `schema`, `json-object`, or `auto` (capability detection) for the OpenAI-compatible provider |
+| `LLM_TEMPERATURE` | `0` | Temperature for OpenAI-compatible requests; 0 maximises structured-output determinism |
+| `LLM_MAX_RETRIES` | `1` | Corrective structured-output retries before degrading to raw delivery |
+| `LLM_TIMEOUT` | `20s` | Per-call LLM deadline; on timeout the raw alert is delivered unenriched |
 | `LLM_MAX_CALLS_PER_MINUTE` | `60` | Cost backstop: sustained LLM call ceiling (0 disables) |
 | `LLM_BURST` | `15` | Cost backstop: max instantaneous burst of LLM calls |
 | `LLM_MAX_CONCURRENT` | `8` | Cost backstop: max in-flight LLM calls (0 disables) |

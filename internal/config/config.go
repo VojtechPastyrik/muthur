@@ -12,12 +12,22 @@ import (
 // Notification receivers are NOT configured here — they are loaded from
 // the config file pointed to by ConfigFile.
 type Config struct {
-	Port            string
-	LogLevel        string
-	AnthropicAPIKey string
-	AnthropicModel  string
-	LLMTimeout      time.Duration
-	Collectors      []CollectorConfig
+	Port       string
+	LogLevel   string
+	LLMTimeout time.Duration
+	Collectors []CollectorConfig
+
+	// LLM provider abstraction. Provider defaults to "anthropic" so an existing
+	// deployment with no new config behaves exactly as before. The resolved key
+	// (LLMAPIKey) comes from LLM_API_KEY_FILE (preferred, a mounted Secret) or
+	// the legacy ANTHROPIC_API_KEY env for back-compat.
+	LLMProvider    string
+	LLMModel       string
+	LLMBaseURL     string
+	LLMAPIKey      string
+	LLMSchemaMode  string
+	LLMTemperature float64
+	LLMMaxRetries  int
 
 	// Cost backstop: hard ceilings on LLM calls regardless of cache/dedup/
 	// correlation. A storm of distinct, uncacheable alerts degrades to raw
@@ -122,11 +132,46 @@ func Load() (*Config, error) {
 	evidenceEnabled, _ := strconv.ParseBool(envOr("NOTIFY_EVIDENCE_ENABLED", "true"))
 	evidenceLogLines, _ := strconv.Atoi(envOr("NOTIFY_LOG_LINES", "8"))
 
+	// --- LLM provider resolution (file-secret friendly, back-compatible) ---
+	llmProvider := strings.ToLower(envOr("LLM_PROVIDER", "anthropic"))
+
+	// Model: explicit LLM_MODEL wins; otherwise fall back to the legacy
+	// ANTHROPIC_MODEL (which keeps the historical default) so the default
+	// Anthropic path is byte-identical to before.
+	llmModel := os.Getenv("LLM_MODEL")
+	anthropicModel := envOr("ANTHROPIC_MODEL", "claude-opus-4-5")
+	if llmModel == "" && (llmProvider == "anthropic" || llmProvider == "") {
+		llmModel = anthropicModel
+	}
+
+	// API key: prefer a mounted file (LLM_API_KEY_FILE), fall back to the legacy
+	// ANTHROPIC_API_KEY env. Keys never come from a plain *_API_KEY env going
+	// forward — the file form matches the receiver-secret convention.
+	apiKey, err := resolveAPIKey()
+	if err != nil {
+		return nil, err
+	}
+
+	llmSchemaMode := envOr("LLM_SCHEMA_MODE", "auto")
+	llmTemperature, err := strconv.ParseFloat(envOr("LLM_TEMPERATURE", "0"), 64)
+	if err != nil {
+		llmTemperature = 0
+	}
+	llmMaxRetries, err := strconv.Atoi(envOr("LLM_MAX_RETRIES", "1"))
+	if err != nil || llmMaxRetries < 0 {
+		llmMaxRetries = 1
+	}
+
 	cfg := &Config{
 		Port:                     envOr("PORT", "8080"),
 		LogLevel:                 envOr("LOG_LEVEL", "info"),
-		AnthropicAPIKey:          os.Getenv("ANTHROPIC_API_KEY"),
-		AnthropicModel:           envOr("ANTHROPIC_MODEL", "claude-opus-4-5"),
+		LLMProvider:              llmProvider,
+		LLMModel:                 llmModel,
+		LLMBaseURL:               os.Getenv("LLM_BASE_URL"),
+		LLMAPIKey:                apiKey,
+		LLMSchemaMode:            llmSchemaMode,
+		LLMTemperature:           llmTemperature,
+		LLMMaxRetries:            llmMaxRetries,
 		LLMTimeout:               llmTimeout,
 		LLMMaxCallsPerMinute:     llmMaxPerMin,
 		LLMBurst:                 llmBurst,
@@ -188,14 +233,46 @@ func Load() (*Config, error) {
 		}
 	}
 
-	if cfg.AnthropicAPIKey == "" {
-		return nil, fmt.Errorf("ANTHROPIC_API_KEY is required")
+	// Provider-aware validation. The default Anthropic path still requires a
+	// key; the OpenAI-compatible path requires base_url + model but allows a
+	// missing key (keyless local endpoints such as Ollama).
+	switch cfg.LLMProvider {
+	case "", "anthropic":
+		if cfg.LLMAPIKey == "" {
+			return nil, fmt.Errorf("an API key is required for the anthropic provider (set LLM_API_KEY_FILE or ANTHROPIC_API_KEY)")
+		}
+	case "openai-compatible":
+		if cfg.LLMBaseURL == "" {
+			return nil, fmt.Errorf("LLM_BASE_URL is required for the openai-compatible provider")
+		}
+		if cfg.LLMModel == "" {
+			return nil, fmt.Errorf("LLM_MODEL is required for the openai-compatible provider")
+		}
+	default:
+		return nil, fmt.Errorf("unknown LLM_PROVIDER %q (want \"anthropic\" or \"openai-compatible\")", cfg.LLMProvider)
 	}
+
 	if len(cfg.Collectors) == 0 {
 		return nil, fmt.Errorf("at least one collector token must be configured")
 	}
 
 	return cfg, nil
+}
+
+// resolveAPIKey reads the LLM API key from a mounted file (LLM_API_KEY_FILE,
+// the preferred, Secret-friendly form) and falls back to the legacy
+// ANTHROPIC_API_KEY env for backward compatibility. Returns an empty string
+// when neither is set — valid for keyless local endpoints; the provider-aware
+// validation above enforces a key only where one is required.
+func resolveAPIKey() (string, error) {
+	if path := os.Getenv("LLM_API_KEY_FILE"); path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read LLM_API_KEY_FILE %q: %w", path, err)
+		}
+		return strings.TrimRight(string(data), " \t\r\n"), nil
+	}
+	return os.Getenv("ANTHROPIC_API_KEY"), nil
 }
 
 func (c *Config) CollectorTokenMap() map[string]string {
