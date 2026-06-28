@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.0] — Unreleased
+## [0.7.0] — 2026-06-28
 
 Theme: collector authentication is now mutual TLS. The shared per-cluster
 bearer token (`X-Collector-Token`) is gone.
