@@ -28,7 +28,11 @@ type ServerTLSConfig struct {
 
 // LoadServerTLS returns a *tls.Config configured for mTLS:
 //   - server cert sourced through a self-reloading callback (file mtime watch)
-//   - client cert REQUIRED and verified against the vendor trust root
+//   - client cert OPTIONAL but verified against the vendor trust root when
+//     presented (VerifyClientCertIfGiven). The /bootstrap-cert endpoint serves
+//     collectors that don't yet hold a cert, so a hard "require" at the TLS
+//     layer would lock new clients out. The Middleware enforces presence on
+//     routes that require an authenticated identity.
 //   - TLS 1.2 minimum
 //
 // The returned config is safe to share across the http.Server lifetime; it
@@ -50,7 +54,7 @@ func LoadServerTLS(cfg ServerTLSConfig) (*tls.Config, error) {
 
 	return &tls.Config{
 		MinVersion:     tls.VersionTLS12,
-		ClientAuth:     tls.RequireAndVerifyClientCert,
+		ClientAuth:     tls.VerifyClientCertIfGiven,
 		ClientCAs:      pool,
 		GetCertificate: reloader.getCertificate,
 	}, nil

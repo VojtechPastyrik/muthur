@@ -34,8 +34,8 @@ func TestLoadServerTLS_Happy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadServerTLS: %v", err)
 	}
-	if cfg.ClientAuth != tls.RequireAndVerifyClientCert {
-		t.Errorf("ClientAuth = %v, want RequireAndVerifyClientCert", cfg.ClientAuth)
+	if cfg.ClientAuth != tls.VerifyClientCertIfGiven {
+		t.Errorf("ClientAuth = %v, want VerifyClientCertIfGiven", cfg.ClientAuth)
 	}
 	if cfg.MinVersion < tls.VersionTLS12 {
 		t.Errorf("MinVersion = %v, want >= TLS 1.2", cfg.MinVersion)
