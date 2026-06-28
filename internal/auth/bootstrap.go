@@ -5,10 +5,8 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -67,14 +65,42 @@ func NewTenants(list []Tenant) (*Tenants, error) {
 }
 
 // Lookup returns the Tenant for clusterID. ok is false when no such tenant
-// is configured; the bootstrap path treats that as a 401 (don't disclose
-// which clusterIDs are known).
+// is configured; the bootstrap path treats that as Unauthenticated (don't
+// disclose which clusterIDs are known).
 func (t *Tenants) Lookup(clusterID string) (Tenant, bool) {
 	if t == nil {
 		return Tenant{}, false
 	}
 	v, ok := t.byCluster[clusterID]
 	return v, ok
+}
+
+// Bootstrap-related sentinel errors. The gRPC adapter maps them:
+//
+//	ErrBootstrapUnauthorized → codes.Unauthenticated
+//	ErrBootstrapForbidden    → codes.PermissionDenied
+//	ErrBootstrapBadRequest   → codes.InvalidArgument
+//	ErrBootstrapInternal     → codes.Internal
+var (
+	ErrBootstrapBadRequest   = errors.New("auth: bootstrap bad request")
+	ErrBootstrapUnauthorized = errors.New("auth: bootstrap unauthorized")
+	ErrBootstrapForbidden    = errors.New("auth: bootstrap forbidden")
+	ErrBootstrapInternal     = errors.New("auth: bootstrap internal error")
+)
+
+// BootstrapInput is the data extracted from the inbound bootstrap RPC. It
+// mirrors the proto BootstrapRequest but is decoupled so the auth package
+// has no proto dependency.
+type BootstrapInput struct {
+	ClusterID      string
+	BootstrapToken string
+	CSRPEM         string
+}
+
+// BootstrapResult carries the freshly issued leaf and the CA chain, both PEM.
+type BootstrapResult struct {
+	CertificatePEM string
+	CAPEM          string
 }
 
 // BootstrapHandler issues a first leaf certificate to a collector that has
@@ -86,7 +112,7 @@ func (t *Tenants) Lookup(clusterID string) (Tenant, bool) {
 //     hasn't expired.
 //  2. Constant-time compares SHA-256(token) against the tenant's stored hash.
 //  3. Atomically marks the token used in the shared store. The first request
-//     wins; concurrent duplicates and replays after success both 401.
+//     wins; concurrent duplicates and replays after success both fail.
 //  4. Signs the CSR with the vendor intermediate, binding the authoritative
 //     tenant identity (NOT what the CSR claims).
 //  5. Returns the leaf + CA chain so the collector can install it and
@@ -115,65 +141,40 @@ func NewBootstrapHandler(tenants *Tenants, signer *Signer, st store.Store, store
 	}
 }
 
-// BootstrapRequest is the JSON body posted by collectors to /bootstrap-cert.
-type BootstrapRequest struct {
-	ClusterID      string `json:"clusterId"`
-	BootstrapToken string `json:"bootstrapToken"`
-	CSR            string `json:"csr"` // PEM-encoded certificate request
-}
-
-// BootstrapResponse carries the freshly issued leaf and the CA chain.
-type BootstrapResponse struct {
-	Certificate string `json:"certificate"` // PEM
-	CA          string `json:"ca"`          // PEM (intermediate)
-}
-
-func (h *BootstrapHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+// Issue validates the request, claims the one-time bootstrap token atomically,
+// and returns a freshly minted leaf + CA chain. The error is one of the
+// sentinel ErrBootstrap* variants; the gRPC adapter maps them to status codes.
+func (h *BootstrapHandler) Issue(ctx context.Context, in BootstrapInput) (*BootstrapResult, error) {
+	if in.ClusterID == "" || in.BootstrapToken == "" || in.CSRPEM == "" {
+		return nil, ErrBootstrapBadRequest
 	}
 
-	var req BootstrapRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	if req.ClusterID == "" || req.BootstrapToken == "" || req.CSR == "" {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-
-	tenant, ok := h.tenants.Lookup(req.ClusterID)
+	tenant, ok := h.tenants.Lookup(in.ClusterID)
 	if !ok {
-		h.logger.Warn("bootstrap for unknown cluster", zap.String("cluster_id", req.ClusterID))
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+		h.logger.Warn("bootstrap for unknown cluster", zap.String("cluster_id", in.ClusterID))
+		return nil, ErrBootstrapUnauthorized
 	}
 	if tenant.Revoked {
-		h.logger.Warn("bootstrap for revoked tenant", zap.String("cluster_id", req.ClusterID))
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+		h.logger.Warn("bootstrap for revoked tenant", zap.String("cluster_id", in.ClusterID))
+		return nil, ErrBootstrapUnauthorized
 	}
 	if !tenant.BootstrapExpiresAt.IsZero() && h.now().After(tenant.BootstrapExpiresAt) {
-		h.logger.Warn("bootstrap token expired", zap.String("cluster_id", req.ClusterID))
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+		h.logger.Warn("bootstrap token expired", zap.String("cluster_id", in.ClusterID))
+		return nil, ErrBootstrapUnauthorized
 	}
 
 	wantHash := strings.TrimPrefix(strings.ToLower(tenant.BootstrapTokenHash), "sha256:")
-	gotSum := sha256.Sum256([]byte(req.BootstrapToken))
+	gotSum := sha256.Sum256([]byte(in.BootstrapToken))
 	gotHash := hex.EncodeToString(gotSum[:])
 	if subtle.ConstantTimeCompare([]byte(wantHash), []byte(gotHash)) != 1 {
-		h.logger.Warn("bootstrap token mismatch", zap.String("cluster_id", req.ClusterID))
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+		h.logger.Warn("bootstrap token mismatch", zap.String("cluster_id", in.ClusterID))
+		return nil, ErrBootstrapUnauthorized
 	}
 
 	// Single-use enforcement. The marker key lives for the remainder of the
 	// bootstrap window (or 24h if no expiry set) so a token cannot be reused
 	// even after this process restarts when the store is shared.
-	usedKey := h.prefix + "bootstrap:used:" + req.ClusterID
+	usedKey := h.prefix + "bootstrap:used:" + in.ClusterID
 	ttl := 24 * time.Hour
 	if !tenant.BootstrapExpiresAt.IsZero() {
 		if d := time.Until(tenant.BootstrapExpiresAt); d > ttl {
@@ -181,21 +182,19 @@ func (h *BootstrapHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.mu.Lock()
-	set, err := h.store.SetNX(r.Context(), usedKey, []byte{1}, ttl)
+	set, err := h.store.SetNX(ctx, usedKey, []byte{1}, ttl)
 	h.mu.Unlock()
 	if err != nil {
 		h.logger.Error("bootstrap store SetNX failed", zap.Error(err))
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("%w: %v", ErrBootstrapInternal, err)
 	}
 	if !set {
-		h.logger.Warn("bootstrap token already used", zap.String("cluster_id", req.ClusterID))
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+		h.logger.Warn("bootstrap token already used", zap.String("cluster_id", in.ClusterID))
+		return nil, ErrBootstrapUnauthorized
 	}
 
 	certPEM, err := h.signer.Sign(
-		[]byte(req.CSR),
+		[]byte(in.CSRPEM),
 		Identity{TenantID: tenant.TenantID, ClusterID: tenant.ClusterID},
 		tenant.CertDuration,
 	)
@@ -205,21 +204,19 @@ func (h *BootstrapHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = h.store.Delete(context.Background(), usedKey)
 		h.logger.Error("bootstrap CSR signing failed",
 			zap.Error(err),
-			zap.String("cluster_id", req.ClusterID),
+			zap.String("cluster_id", in.ClusterID),
 		)
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+		return nil, fmt.Errorf("%w: %v", ErrBootstrapBadRequest, err)
 	}
 
 	h.logger.Info("bootstrap issued",
-		zap.String("cluster_id", req.ClusterID),
+		zap.String("cluster_id", in.ClusterID),
 		zap.String("tenant_id", tenant.TenantID),
 		zap.Duration("cert_duration", tenant.CertDuration),
 	)
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(BootstrapResponse{
-		Certificate: string(certPEM),
-		CA:          string(h.signer.CACertPEM()),
-	})
+	return &BootstrapResult{
+		CertificatePEM: string(certPEM),
+		CAPEM:          string(h.signer.CACertPEM()),
+	}, nil
 }

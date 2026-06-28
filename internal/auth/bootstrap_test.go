@@ -1,12 +1,10 @@
 package auth
 
 import (
-	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
+	"errors"
 	"testing"
 	"time"
 
@@ -42,25 +40,20 @@ func TestBootstrap_HappyPath(t *testing.T) {
 	})
 	csrPEM, _ := makeCSR(t, "anything")
 
-	resp := postBootstrap(t, h, BootstrapRequest{
+	res, err := h.Issue(context.Background(), BootstrapInput{
 		ClusterID:      "cluster-acme",
 		BootstrapToken: token,
-		CSR:            string(csrPEM),
+		CSRPEM:         string(csrPEM),
 	})
-
-	if resp.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", resp.Code, resp.Body.String())
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
 	}
-	var body BootstrapResponse
-	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if body.Certificate == "" || body.CA == "" {
-		t.Errorf("response missing cert or CA: %+v", body)
+	if res.CertificatePEM == "" || res.CAPEM == "" {
+		t.Errorf("response missing cert or CA: %+v", res)
 	}
 
 	// Round-trip the issued cert: the identity must equal the tenant's.
-	leaf := parseLeafPEM(t, []byte(body.Certificate))
+	leaf := parseLeafPEM(t, []byte(res.CertificatePEM))
 	id, err := ExtractFromCert(leaf)
 	if err != nil {
 		t.Fatalf("ExtractFromCert: %v", err)
@@ -74,13 +67,11 @@ func TestBootstrap_RejectsUnknownCluster(t *testing.T) {
 	h, _ := newBootstrapHandler(t)
 	csrPEM, _ := makeCSR(t, "x")
 
-	resp := postBootstrap(t, h, BootstrapRequest{
-		ClusterID:      "cluster-ghost",
-		BootstrapToken: "anything",
-		CSR:            string(csrPEM),
+	_, err := h.Issue(context.Background(), BootstrapInput{
+		ClusterID: "cluster-ghost", BootstrapToken: "anything", CSRPEM: string(csrPEM),
 	})
-	if resp.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401", resp.Code)
+	if !errors.Is(err, ErrBootstrapUnauthorized) {
+		t.Errorf("err = %v, want ErrBootstrapUnauthorized", err)
 	}
 }
 
@@ -94,11 +85,11 @@ func TestBootstrap_RejectsRevokedTenant(t *testing.T) {
 	})
 	csrPEM, _ := makeCSR(t, "x")
 
-	resp := postBootstrap(t, h, BootstrapRequest{
-		ClusterID: "cluster-a", BootstrapToken: token, CSR: string(csrPEM),
+	_, err := h.Issue(context.Background(), BootstrapInput{
+		ClusterID: "cluster-a", BootstrapToken: token, CSRPEM: string(csrPEM),
 	})
-	if resp.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401", resp.Code)
+	if !errors.Is(err, ErrBootstrapUnauthorized) {
+		t.Errorf("err = %v, want ErrBootstrapUnauthorized", err)
 	}
 }
 
@@ -111,11 +102,11 @@ func TestBootstrap_RejectsExpiredToken(t *testing.T) {
 	})
 	csrPEM, _ := makeCSR(t, "x")
 
-	resp := postBootstrap(t, h, BootstrapRequest{
-		ClusterID: "cluster-a", BootstrapToken: token, CSR: string(csrPEM),
+	_, err := h.Issue(context.Background(), BootstrapInput{
+		ClusterID: "cluster-a", BootstrapToken: token, CSRPEM: string(csrPEM),
 	})
-	if resp.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401", resp.Code)
+	if !errors.Is(err, ErrBootstrapUnauthorized) {
+		t.Errorf("err = %v, want ErrBootstrapUnauthorized", err)
 	}
 }
 
@@ -127,11 +118,11 @@ func TestBootstrap_RejectsWrongToken(t *testing.T) {
 	})
 	csrPEM, _ := makeCSR(t, "x")
 
-	resp := postBootstrap(t, h, BootstrapRequest{
-		ClusterID: "cluster-a", BootstrapToken: "wrong", CSR: string(csrPEM),
+	_, err := h.Issue(context.Background(), BootstrapInput{
+		ClusterID: "cluster-a", BootstrapToken: "wrong", CSRPEM: string(csrPEM),
 	})
-	if resp.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401", resp.Code)
+	if !errors.Is(err, ErrBootstrapUnauthorized) {
+		t.Errorf("err = %v, want ErrBootstrapUnauthorized", err)
 	}
 }
 
@@ -146,19 +137,18 @@ func TestBootstrap_TokenIsSingleUse(t *testing.T) {
 	})
 	csrPEM, _ := makeCSR(t, "x")
 
-	first := postBootstrap(t, h, BootstrapRequest{
-		ClusterID: "cluster-a", BootstrapToken: token, CSR: string(csrPEM),
-	})
-	if first.Code != http.StatusOK {
-		t.Fatalf("first status = %d, want 200", first.Code)
+	if _, err := h.Issue(context.Background(), BootstrapInput{
+		ClusterID: "cluster-a", BootstrapToken: token, CSRPEM: string(csrPEM),
+	}); err != nil {
+		t.Fatalf("first Issue: %v", err)
 	}
 
-	// Second attempt with the same token, same CSR, must be rejected.
-	second := postBootstrap(t, h, BootstrapRequest{
-		ClusterID: "cluster-a", BootstrapToken: token, CSR: string(csrPEM),
+	// Second attempt with the same token must be rejected.
+	_, err := h.Issue(context.Background(), BootstrapInput{
+		ClusterID: "cluster-a", BootstrapToken: token, CSRPEM: string(csrPEM),
 	})
-	if second.Code != http.StatusUnauthorized {
-		t.Errorf("second status = %d, want 401 (single-use enforcement)", second.Code)
+	if !errors.Is(err, ErrBootstrapUnauthorized) {
+		t.Errorf("second Issue err = %v, want ErrBootstrapUnauthorized (single-use)", err)
 	}
 }
 
@@ -174,38 +164,27 @@ func TestBootstrap_BadCSRPreservesToken(t *testing.T) {
 		CertDuration:       time.Hour,
 	})
 
-	bad := postBootstrap(t, h, BootstrapRequest{
-		ClusterID: "cluster-a", BootstrapToken: token, CSR: "not a csr",
+	_, err := h.Issue(context.Background(), BootstrapInput{
+		ClusterID: "cluster-a", BootstrapToken: token, CSRPEM: "not a csr",
 	})
-	if bad.Code != http.StatusBadRequest {
-		t.Fatalf("bad CSR status = %d, want 400", bad.Code)
+	if !errors.Is(err, ErrBootstrapBadRequest) {
+		t.Fatalf("bad CSR err = %v, want ErrBootstrapBadRequest", err)
 	}
 
 	// Retry with a good CSR — must succeed.
 	csrPEM, _ := makeCSR(t, "x")
-	good := postBootstrap(t, h, BootstrapRequest{
-		ClusterID: "cluster-a", BootstrapToken: token, CSR: string(csrPEM),
-	})
-	if good.Code != http.StatusOK {
-		t.Errorf("retry status = %d, want 200 (token must be preserved after bad CSR)", good.Code)
-	}
-}
-
-func TestBootstrap_RejectsNonPOST(t *testing.T) {
-	h, _ := newBootstrapHandler(t)
-	req := httptest.NewRequest(http.MethodGet, "/bootstrap-cert", nil)
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want 405", rr.Code)
+	if _, err := h.Issue(context.Background(), BootstrapInput{
+		ClusterID: "cluster-a", BootstrapToken: token, CSRPEM: string(csrPEM),
+	}); err != nil {
+		t.Errorf("retry Issue err = %v, want nil (token must survive bad CSR)", err)
 	}
 }
 
 func TestBootstrap_RejectsEmptyFields(t *testing.T) {
 	h, _ := newBootstrapHandler(t)
-	resp := postBootstrap(t, h, BootstrapRequest{})
-	if resp.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.Code)
+	_, err := h.Issue(context.Background(), BootstrapInput{})
+	if !errors.Is(err, ErrBootstrapBadRequest) {
+		t.Errorf("err = %v, want ErrBootstrapBadRequest", err)
 	}
 }
 
@@ -221,13 +200,4 @@ func TestNewTenants_RejectsEmpty(t *testing.T) {
 	if err == nil {
 		t.Error("NewTenants accepted empty clusterId")
 	}
-}
-
-func postBootstrap(t *testing.T, h *BootstrapHandler, body BootstrapRequest) *httptest.ResponseRecorder {
-	t.Helper()
-	buf, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/bootstrap-cert", bytes.NewReader(buf))
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-	return rr
 }

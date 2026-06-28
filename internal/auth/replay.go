@@ -5,34 +5,38 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/VojtechPastyrik/muthur/internal/store"
 )
 
-// Replay-protection HTTP headers. The collector signs nothing here — the mTLS
-// channel already provides integrity and authenticity. These headers exist
-// only to make every request fresh and single-use, so an attacker who captures
-// a ciphertext (e.g. a TLS-recorded session) cannot replay it later.
+// Replay-protection metadata keys. The collector signs nothing here — the mTLS
+// channel already provides integrity and authenticity. These exist only to
+// make every request fresh and single-use, so an attacker who captures a
+// ciphertext (e.g. a TLS-recorded session) cannot replay it later.
+//
+// On the gRPC wire they travel as lower-cased metadata keys; HTTP-era callers
+// used X-Muthur-Timestamp / X-Muthur-Nonce headers, which gRPC normalises to
+// the same names.
 const (
-	HeaderTimestamp = "X-Muthur-Timestamp"
-	HeaderNonce     = "X-Muthur-Nonce"
+	MetaTimestamp = "x-muthur-timestamp"
+	MetaNonce     = "x-muthur-nonce"
 
 	// Minimum nonce length, in hex characters. 32 hex = 16 bytes = 128 bits,
 	// the cheapest size that makes random collisions negligible.
 	minNonceHexLen = 32
 )
 
-// Replay-related sentinel errors. Callers should map these to 401/400/409 as
-// appropriate; the package itself avoids the http layer to stay testable.
+// Replay-related sentinel errors. Callers should map these to gRPC codes
+// (Unauthenticated / InvalidArgument) as appropriate; the package itself
+// avoids the transport layer to stay testable.
 var (
-	ErrReplayMissingTimestamp = errors.New("auth: missing timestamp header")
-	ErrReplayBadTimestamp     = errors.New("auth: malformed timestamp header")
+	ErrReplayMissingTimestamp = errors.New("auth: missing timestamp metadata")
+	ErrReplayBadTimestamp     = errors.New("auth: malformed timestamp metadata")
 	ErrReplayClockSkew        = errors.New("auth: timestamp outside window")
-	ErrReplayMissingNonce     = errors.New("auth: missing nonce header")
-	ErrReplayBadNonce         = errors.New("auth: malformed nonce header")
+	ErrReplayMissingNonce     = errors.New("auth: missing nonce metadata")
+	ErrReplayBadNonce         = errors.New("auth: malformed nonce metadata")
 	ErrReplayNonceReused      = errors.New("auth: nonce already seen")
 )
 
@@ -74,23 +78,22 @@ func NewReplayGuard(s store.Store, window time.Duration, prefix string) *ReplayG
 	}
 }
 
-// Verify extracts the timestamp + nonce headers from r, validates them, and
-// records the nonce as seen. Returns nil iff the request is fresh and the
-// nonce was previously unused for this identity.
+// Verify validates the timestamp + nonce pair extracted from the inbound
+// request metadata and records the nonce as seen. Returns nil iff the request
+// is fresh and the nonce was previously unused for this identity.
 //
 // Identity scopes the nonce cache: a malicious tenant cannot pre-burn nonces
 // for another tenant since the cache key embeds the caller's identity.
-func (g *ReplayGuard) Verify(ctx context.Context, id *Identity, r *http.Request) error {
+func (g *ReplayGuard) Verify(ctx context.Context, id *Identity, tsStr, nonce string) error {
 	if id == nil {
 		// Defense in depth: middleware should reject before we get here.
 		return ErrNoIdentity
 	}
 
-	tsHeader := r.Header.Get(HeaderTimestamp)
-	if tsHeader == "" {
+	if tsStr == "" {
 		return ErrReplayMissingTimestamp
 	}
-	tsUnix, err := strconv.ParseInt(tsHeader, 10, 64)
+	tsUnix, err := strconv.ParseInt(tsStr, 10, 64)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrReplayBadTimestamp, err)
 	}
@@ -99,7 +102,6 @@ func (g *ReplayGuard) Verify(ctx context.Context, id *Identity, r *http.Request)
 		return fmt.Errorf("%w: %s drift", ErrReplayClockSkew, delta)
 	}
 
-	nonce := r.Header.Get(HeaderNonce)
 	if nonce == "" {
 		return ErrReplayMissingNonce
 	}

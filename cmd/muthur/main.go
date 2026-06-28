@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,6 +15,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/reflection"
 
 	"github.com/VojtechPastyrik/muthur/internal/appconfig"
 	"github.com/VojtechPastyrik/muthur/internal/auth"
@@ -22,6 +26,7 @@ import (
 	"github.com/VojtechPastyrik/muthur/internal/embed"
 	"github.com/VojtechPastyrik/muthur/internal/evaluator"
 	"github.com/VojtechPastyrik/muthur/internal/feedback"
+	"github.com/VojtechPastyrik/muthur/internal/grpcsrv"
 	"github.com/VojtechPastyrik/muthur/internal/history"
 	"github.com/VojtechPastyrik/muthur/internal/ingest"
 	"github.com/VojtechPastyrik/muthur/internal/llmcache"
@@ -31,6 +36,7 @@ import (
 	"github.com/VojtechPastyrik/muthur/internal/routing"
 	"github.com/VojtechPastyrik/muthur/internal/silence"
 	"github.com/VojtechPastyrik/muthur/internal/store"
+	pb "github.com/VojtechPastyrik/muthur/proto"
 )
 
 func main() {
@@ -188,7 +194,7 @@ func run() error {
 	replayGuard := auth.NewReplayGuard(st, cfg.ReplayWindow, cfg.RedisPrefix)
 
 	// Intermediate CA used to sign collector CSRs. The signer is shared
-	// between /bootstrap-cert (first issuance) and /sign-csr (renewals).
+	// between BootstrapCert (first issuance) and SignCSR (renewals).
 	signer, err := auth.NewSignerFromFiles(cfg.IntermediateCAFile, cfg.IntermediateKeyFile)
 	if err != nil {
 		return fmt.Errorf("load intermediate CA: %w", err)
@@ -203,36 +209,34 @@ func run() error {
 	}
 	logger.Info("tenants loaded", zap.Int("count", len(fileCfg.Tenants)))
 
-	bootstrap := auth.NewBootstrapHandler(tenants, signer, st, cfg.RedisPrefix, logger)
-	renew := auth.NewRenewHandler(tenants, signer, replayGuard, logger)
+	bootstrapH := auth.NewBootstrapHandler(tenants, signer, st, cfg.RedisPrefix, logger)
+	renewH := auth.NewRenewHandler(tenants, signer, logger)
 
-	handler := ingest.NewHandler(replayGuard, pipe, logger)
+	ingestH := ingest.NewHandler(pipe, logger)
 
-	// --- mTLS listener ---
-	// Routes here serve collectors over a verified client cert. They live on
-	// the TLS-terminating port (default 8080) behind passthrough ingress.
-	mtlsRouter := chi.NewRouter()
-	mtlsRouter.Use(middleware.Recoverer)
-	mtlsRouter.Use(middleware.RealIP)
+	// --- gRPC mTLS server (port 8080) ---
+	// Collectors talk to the brain over the Brain service. Auth + replay run
+	// as unary interceptors; BootstrapCert is exempt from both because the
+	// caller has no cert yet and the bootstrap token's single-use guarantee
+	// replaces the nonce check.
+	grpcSrv := grpc.NewServer(
+		grpc.Creds(credentials.NewTLS(tlsCfg)),
+		grpc.ChainUnaryInterceptor(
+			grpcsrv.AuthInterceptor(logger),
+			grpcsrv.ReplayInterceptor(replayGuard, logger),
+		),
+	)
+	pb.RegisterBrainServer(grpcSrv, grpcsrv.New(bootstrapH, renewH, ingestH, logger))
+	// Reflection lets operators poke the API with grpcurl in production; it
+	// only exposes the schema, which we already publish in the proto repo.
+	reflection.Register(grpcSrv)
 
-	mtlsRouter.Group(func(r chi.Router) {
-		r.Use(auth.Middleware(logger))
-		r.Post("/ingest", handler.ServeHTTP)
-		r.Post("/sign-csr", renew.ServeHTTP)
-	})
-
-	// /bootstrap-cert intentionally has no auth middleware: the bootstrap
-	// token in the request body proves the caller is the legitimate new
-	// collector for that cluster_id. The single-use enforcement in
-	// BootstrapHandler stops anyone from grinding the endpoint.
-	mtlsRouter.Post("/bootstrap-cert", bootstrap.ServeHTTP)
-
-	// --- Public listener ---
+	// --- Public HTTP listener (port 8081) ---
 	// Plain HTTP for the browser-facing /feedback link emitted into
 	// notifications, kubelet probes, and the Prometheus scrape. Lives on a
-	// separate port (default 8081) so a public-facing ingress (Cloudflare
-	// proxy, Let's Encrypt termination, …) can front it without colliding
-	// with the mTLS passthrough that owns the API port.
+	// separate port so a public-facing ingress (Cloudflare proxy, Let's
+	// Encrypt termination, …) can front it without colliding with the mTLS
+	// passthrough that owns the gRPC port.
 	publicRouter := chi.NewRouter()
 	publicRouter.Use(middleware.Recoverer)
 	publicRouter.Use(middleware.RealIP)
@@ -244,18 +248,22 @@ func run() error {
 		w.Write([]byte("ok"))
 	})
 
-	mtlsAddr := fmt.Sprintf(":%s", cfg.Port)
+	grpcAddr := fmt.Sprintf(":%s", cfg.Port)
 	publicAddr := fmt.Sprintf(":%s", cfg.PublicPort)
-	mtlsSrv := &http.Server{Addr: mtlsAddr, Handler: mtlsRouter, TLSConfig: tlsCfg}
 	publicSrv := &http.Server{Addr: publicAddr, Handler: publicRouter}
+
+	grpcLn, err := net.Listen("tcp", grpcAddr)
+	if err != nil {
+		return fmt.Errorf("listen gRPC: %w", err)
+	}
 
 	// Listen in the background so the main goroutine can wait for a shutdown
 	// signal and drain in-flight work. Both listeners report through the
 	// same serveErr channel — the first failure exits the process.
 	serveErr := make(chan error, 2)
 	go func() {
-		logger.Info("starting muthur (mTLS)", zap.String("addr", mtlsAddr))
-		if err := mtlsSrv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+		logger.Info("starting muthur (gRPC mTLS)", zap.String("addr", grpcAddr))
+		if err := grpcSrv.Serve(grpcLn); err != nil {
 			serveErr <- err
 		}
 	}()
@@ -271,7 +279,7 @@ func run() error {
 
 	select {
 	case err := <-serveErr:
-		return fmt.Errorf("http server: %w", err)
+		return fmt.Errorf("server: %w", err)
 	case <-ctx.Done():
 	}
 
@@ -282,12 +290,21 @@ func run() error {
 	// Stop accepting new requests on BOTH listeners, flush buffered incidents,
 	// then wait for in-flight processing to drain.
 	_ = publicSrv.Shutdown(shCtx)
-	_ = mtlsSrv.Shutdown(shCtx)
+	stoppedGRPC := make(chan struct{})
+	go func() {
+		grpcSrv.GracefulStop()
+		close(stoppedGRPC)
+	}()
+	select {
+	case <-stoppedGRPC:
+	case <-shCtx.Done():
+		grpcSrv.Stop()
+	}
 	pipe.Drain()
 
 	done := make(chan struct{})
 	go func() {
-		handler.Wait()
+		ingestH.Wait()
 		close(done)
 	}()
 	select {
