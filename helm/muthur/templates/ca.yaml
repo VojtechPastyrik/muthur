@@ -1,0 +1,102 @@
+{{- /*
+  Two-tier CA managed by cert-manager and provisioned on first install.
+
+  Layout:
+    selfSigned Issuer  ──signs──▶  Root Certificate (CA, 10y)
+       │                                │
+       │                                └─▶ Root Secret (kept; backup to safe)
+       │
+    Root Issuer  ──signs──▶  Intermediate Certificate (CA, 1y)
+                                  │
+                                  └─▶ Intermediate Secret (mounted into brain)
+                                          │
+                                          └─▶ ClusterIssuer "muthur-intermediate"
+                                               (used by brain + in-cluster
+                                                collectors for renewals)
+
+  The root key is the apocalypse footgun: losing the Secret means rebuilding
+  the entire PKI from scratch. Templates pin helm.sh/resource-policy=keep AND
+  argocd Prune=false on the root Secret so neither helm uninstall nor an
+  ArgoCD sync wipe can take it out.
+*/}}
+{{- if .Values.ca.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "muthur.fullname" . }}-ca-selfsigned
+  labels:
+    {{- include "muthur.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "muthur.fullname" . }}-root-ca
+  annotations:
+    helm.sh/resource-policy: keep
+    argocd.argoproj.io/sync-options: Prune=false
+  labels:
+    {{- include "muthur.labels" . | nindent 4 }}
+spec:
+  isCA: true
+  commonName: {{ .Values.ca.root.commonName | quote }}
+  secretName: {{ .Values.ca.root.secretName }}
+  secretTemplate:
+    annotations:
+      helm.sh/resource-policy: keep
+      argocd.argoproj.io/sync-options: Prune=false
+  duration: {{ .Values.ca.root.duration }}
+  renewBefore: {{ .Values.ca.root.renewBefore }}
+  privateKey:
+    algorithm: ECDSA
+    size: 384
+  issuerRef:
+    name: {{ include "muthur.fullname" . }}-ca-selfsigned
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "muthur.fullname" . }}-root
+  labels:
+    {{- include "muthur.labels" . | nindent 4 }}
+spec:
+  ca:
+    secretName: {{ .Values.ca.root.secretName }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "muthur.fullname" . }}-intermediate-ca
+  labels:
+    {{- include "muthur.labels" . | nindent 4 }}
+spec:
+  isCA: true
+  commonName: {{ .Values.ca.intermediate.commonName | quote }}
+  secretName: {{ .Values.ca.intermediate.secretName }}
+  duration: {{ .Values.ca.intermediate.duration }}
+  renewBefore: {{ .Values.ca.intermediate.renewBefore }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: {{ include "muthur.fullname" . }}-root
+    kind: Issuer
+---
+{{- /*
+  ClusterIssuer (not Issuer) so that in-cluster collectors in any namespace
+  can reference it for their own Certificate CRs. The intermediate Secret it
+  reads must live in cert-manager's namespace; the values let operators
+  override that if needed.
+*/}}
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ .Values.ca.intermediate.issuerName }}
+  labels:
+    {{- include "muthur.labels" . | nindent 4 }}
+spec:
+  ca:
+    secretName: {{ .Values.ca.intermediate.secretName }}
+{{- end }}

@@ -24,6 +24,13 @@ ingress:
   tls:
     enabled: true
     secretName: muthur-tls
+    # When mTLS is in use the ingress MUST pass TLS through to the brain
+    # rather than terminating it, because the client cert is verified by the
+    # Go server, not the ingress. Traefik example:
+    #   annotations:
+    #     traefik.ingress.kubernetes.io/router.tls: "true"
+    #     traefik.ingress.kubernetes.io/router.tls.passthrough: "true"
+    passthrough: true
   annotations: {}
 
 
@@ -232,6 +239,12 @@ config:
   # thumbs-down feedback links in notifications to be emitted and clickable.
   publicUrl: ""
 
+  # --- mTLS replay protection ---
+  # Window (Go duration) within which incoming request timestamps are accepted.
+  # Nonces are cached for 2× this. Tighter = stronger replay protection but
+  # less tolerance for clock skew between collectors and brain.
+  authReplayWindow: "5m"
+
 # --- Persistence ---
 # When url is set, dedup / analysis cache / feedback state is shared across
 # replicas and survives restarts (Redis or DragonflyDB, redis:// or rediss://).
@@ -240,11 +253,67 @@ redis:
   url: ""
   prefix: "muthur:"
 
-collectors:
-  - clusterId: cluster-home
-    tokenSecretKey: collector-token-cluster-home
-  - clusterId: cluster-vps
-    tokenSecretKey: collector-token-cluster-vps
+# --- mTLS CA (cert-manager) ---
+# Two-tier CA managed by the chart on the brain cluster: a self-signed root
+# (10y) and an intermediate (1y, auto-renewed). The intermediate is what
+# brain holds and what signs collector leafs at /bootstrap-cert and /sign-csr.
+#
+# IMPORTANT: when this chart is the source of the root, BACK UP the root
+# Secret (default: muthur-root-ca-tls) to a safe place (1Password, USB in
+# safe) right after first install. Losing it means rebuilding the entire
+# PKI and re-onboarding every collector. The chart pins
+# helm.sh/resource-policy=keep on the root resources so neither helm
+# uninstall nor an ArgoCD prune can wipe it, but external admin deletion
+# is still your responsibility.
+ca:
+  enabled: true
+  root:
+    commonName: MUTHUR Vendor Root CA
+    duration: 87600h           # 10 years
+    renewBefore: 720h          # 30 days
+    secretName: muthur-root-ca-tls
+  intermediate:
+    commonName: MUTHUR Vendor Intermediate CA
+    duration: 8760h            # 1 year
+    renewBefore: 720h          # 30 days
+    secretName: muthur-intermediate-ca-tls
+    # ClusterIssuer name used by both brain and any in-cluster collector
+    # whose chart references this issuer for its own cert.
+    issuerName: muthur-intermediate
+
+# --- Brain server cert ---
+# cert-manager mints the listener's server cert from the intermediate. It's
+# hot-reloaded by the brain on renewal (no restart needed).
+serverCert:
+  enabled: true
+  duration: 720h               # 30 days
+  renewBefore: 168h            # 7 days
+  # Falls back to ingress.host when empty.
+  commonName: ""
+  extraDnsNames: []
+
+# --- Tenants ---
+# Per-cluster bootstrap config. Each entry must have:
+#   - clusterId            unique cluster identifier (also the cert CN)
+#   - tenantId             vendor customer group (SPIFFE URI tenant segment)
+#   - bootstrapTokenHash   "sha256:<hex>" of the one-time bootstrap token
+#                          (generated with `openssl rand -hex 32`, hashed with
+#                           `echo -n "$TOKEN" | sha256sum`)
+#   - bootstrapExpiresAt   RFC3339 timestamp after which bootstrap is rejected
+#   - revoked              true to refuse all renewals (existing certs still
+#                          work until natural expiry; pair with deny-list)
+#   - certDuration         lifetime of issued leafs (default 720h / 30 days)
+#
+# Add or revoke clients by editing this list and merging the PR.
+tenants: []
+# Example:
+# tenants:
+#   - clusterId: cluster-acme
+#     tenantId: acme
+#     bootstrapTokenHash: "sha256:abc123..."
+#     bootstrapExpiresAt: "2026-07-01T12:00:00Z"
+#     revoked: false
+#     certDuration: 720h
 
 externalSecrets:
   enabled: true
@@ -256,9 +325,6 @@ externalSecrets:
   # key named by config.llm.apiKeySecretKey and mounted as a file. Default suits
   # the Anthropic key; override for an OpenAI-compatible provider.
   llmApiKeyProperty: anthropic-api-key
-  collectorTokenKeys:
-    - collector-token-cluster-home
-    - collector-token-cluster-vps
   # Secret keys to fetch from the remote secret store for receivers.
   # Each key must match a value referenced by receivers[*].secretKeys above.
   # Each key becomes a file mounted at /secrets/receivers/<key> in the pod.
@@ -267,8 +333,6 @@ externalSecrets:
   # receiverSecretKeys:
   #   - ops-telegram-token
   #   - critical-discord-webhook
-  #   - dev-discord-webhook
-  #   - oncall-pagerduty-key
 
 devSecrets:
   enabled: false
@@ -277,18 +341,9 @@ devSecrets:
   # kept as a backward-compatible alias. Leave both empty for keyless endpoints.
   llmApiKey: ""
   anthropicApiKey: ""
-  collectorTokens:
-    - clusterId: cluster-home
-      token: "dev-token-home"
-    - clusterId: cluster-vps
-      token: "dev-token-vps"
   # Receiver secrets for local dev — map of Secret key name → value.
   # Each key becomes a file mounted at /secrets/receivers/<key>.
   receiverSecrets: {}
-  # Example:
-  # receiverSecrets:
-  #   ops-telegram-token: "1234567:ABC-DEF..."
-  #   critical-discord-webhook: "https://discord.com/api/webhooks/..."
 
 resources:
   limits:

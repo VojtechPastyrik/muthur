@@ -32,19 +32,24 @@ spec:
             capabilities:
               drop: [ALL]
           ports:
-            - name: http
+            - name: https
               containerPort: 8080
               protocol: TCP
+          # Probes use HTTPS now that the listener is TLS. The kubelet does not
+          # have a client cert; /healthz lives outside the auth middleware so
+          # an anonymous TLS connect with verification skipped is sufficient.
           livenessProbe:
             httpGet:
               path: /healthz
-              port: http
+              port: https
+              scheme: HTTPS
             initialDelaySeconds: 5
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /healthz
-              port: http
+              port: https
+              scheme: HTTPS
             initialDelaySeconds: 2
             periodSeconds: 5
           env:
@@ -132,18 +137,37 @@ spec:
             - name: REDIS_PREFIX
               value: {{ .Values.redis.prefix | quote }}
             {{- end }}
-            {{- range .Values.collectors }}
-            - name: COLLECTOR_TOKEN_{{ .clusterId | upper | replace "-" "_" }}
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "muthur.fullname" $ }}-secret
-                  key: {{ .tokenSecretKey }}
-            {{- end }}
+            # --- mTLS ---
+            # Server cert + key for the TLS listener (collectors verify brain).
+            # Trust root for verifying client certs presented by collectors.
+            # Intermediate keypair used to sign collector CSRs at /bootstrap-cert
+            # and /sign-csr. All five files are mounted from cert-manager Secrets.
+            - name: TLS_SERVER_CERT_FILE
+              value: /secrets/tls/server/tls.crt
+            - name: TLS_SERVER_KEY_FILE
+              value: /secrets/tls/server/tls.key
+            - name: TLS_TRUST_ROOT_FILE
+              value: /secrets/tls/root/tls.crt
+            - name: INTERMEDIATE_CA_FILE
+              value: /secrets/tls/intermediate/tls.crt
+            - name: INTERMEDIATE_KEY_FILE
+              value: /secrets/tls/intermediate/tls.key
+            - name: AUTH_REPLAY_WINDOW
+              value: {{ .Values.config.authReplayWindow | quote }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - name: config
               mountPath: /config
+              readOnly: true
+            - name: tls-server
+              mountPath: /secrets/tls/server
+              readOnly: true
+            - name: tls-root
+              mountPath: /secrets/tls/root
+              readOnly: true
+            - name: tls-intermediate
+              mountPath: /secrets/tls/intermediate
               readOnly: true
             {{- if .Values.config.llm.apiKeySecretKey }}
             - name: llm-secret
@@ -159,6 +183,23 @@ spec:
         - name: config
           configMap:
             name: {{ include "muthur.fullname" . }}-config
+        - name: tls-server
+          secret:
+            secretName: {{ include "muthur.fullname" . }}-server-tls
+            defaultMode: 0400
+        - name: tls-root
+          secret:
+            # Mount the root Secret directly; only the public cert (tls.crt)
+            # is read by the brain as the trust root. The root key MUST live
+            # in this Secret too (cert-manager keeps it there) but the
+            # process never reads it — file permissions and SecurityContext
+            # keep it inaccessible to anything but the brain.
+            secretName: {{ .Values.ca.root.secretName }}
+            defaultMode: 0400
+        - name: tls-intermediate
+          secret:
+            secretName: {{ .Values.ca.intermediate.secretName }}
+            defaultMode: 0400
         {{- if .Values.config.llm.apiKeySecretKey }}
         - name: llm-secret
           secret:

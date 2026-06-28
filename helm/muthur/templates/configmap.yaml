@@ -49,3 +49,17 @@ data:
       {{- if not .Values.routing.rules }}
       []
       {{- end }}
+    tenants:
+    {{- range .Values.tenants }}
+      - clusterId: {{ .clusterId | quote }}
+        tenantId: {{ .tenantId | default "" | quote }}
+        bootstrapTokenHash: {{ .bootstrapTokenHash | default "" | quote }}
+        {{- if .bootstrapExpiresAt }}
+        bootstrapExpiresAt: {{ .bootstrapExpiresAt | quote }}
+        {{- end }}
+        revoked: {{ .revoked | default false }}
+        certDuration: {{ .certDuration | default "720h" | quote }}
+    {{- end }}
+    {{- if not .Values.tenants }}
+      []
+    {{- end }}

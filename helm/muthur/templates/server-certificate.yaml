@@ -1,0 +1,39 @@
+{{- /*
+  Brain's own server cert. Used by the TLS listener that terminates mTLS for
+  /ingest and /sign-csr (and the unauthenticated /bootstrap-cert which still
+  needs a valid server cert so the collector can verify the brain).
+
+  cert-manager renews this transparently; the brain reloads via the
+  GetCertificate file-mtime callback without a restart.
+*/}}
+{{- if .Values.serverCert.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "muthur.fullname" . }}-server
+  labels:
+    {{- include "muthur.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "muthur.fullname" . }}-server-tls
+  duration: {{ .Values.serverCert.duration }}
+  renewBefore: {{ .Values.serverCert.renewBefore }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  commonName: {{ .Values.serverCert.commonName | default .Values.ingress.host | quote }}
+  dnsNames:
+    {{- if .Values.ingress.host }}
+    - {{ .Values.ingress.host | quote }}
+    {{- end }}
+    {{- range .Values.serverCert.extraDnsNames }}
+    - {{ . | quote }}
+    {{- end }}
+    # In-cluster DNS so an in-namespace collector can connect via the Service
+    # without going through ingress.
+    - {{ include "muthur.fullname" . }}
+    - {{ printf "%s.%s.svc" (include "muthur.fullname" .) .Release.Namespace }}
+    - {{ printf "%s.%s.svc.cluster.local" (include "muthur.fullname" .) .Release.Namespace }}
+  issuerRef:
+    name: {{ .Values.ca.intermediate.issuerName }}
+    kind: ClusterIssuer
+{{- end }}

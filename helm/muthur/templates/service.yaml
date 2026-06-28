@@ -7,8 +7,11 @@ metadata:
 spec:
   type: {{ .Values.service.type }}
   ports:
+    # Port still named "http" by convention but the listener terminates TLS:
+    # in-cluster callers must dial https://{service}:{port}. ServiceMonitor and
+    # ingress templates handle the scheme switch.
     - port: {{ .Values.service.port }}
-      targetPort: http
+      targetPort: https
       protocol: TCP
       name: http
   selector:
