@@ -4,6 +4,38 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] — 2026-06-28
+
+### Changed
+
+- **Breaking wire format.** The mTLS listener (port 8080) now serves the
+  gRPC `monitoring.v1.Brain` service instead of the previous REST
+  endpoints (`/ingest`, `/bootstrap-cert`, `/sign-csr`). Collectors must
+  upgrade in lockstep — `muthur-collector` ≥ 0.8.0 is required. The
+  public listener (port 8081, `/feedback`, `/healthz`, `/metrics`) is
+  unchanged.
+- Replay protection (timestamp + nonce) now travels via gRPC metadata
+  (`x-muthur-timestamp`, `x-muthur-nonce`) instead of HTTP headers
+  (`X-Muthur-*`). Same single-use semantics; same identity-scoped nonce
+  cache.
+- Ingress passthrough is wire-format-agnostic: existing Traefik
+  IngressRouteTCP / Gateway API TLSRoute / nginx ssl-passthrough configs
+  keep working without changes (TCP passthrough doesn't inspect the
+  payload).
+
+### Added
+
+- gRPC reflection on the mTLS listener so operators can `grpcurl` the
+  Brain service in production. Reflection only exposes the schema, which
+  is already public in the proto.
+
+### Migration
+
+- Bump both charts to 0.8.0 at the same time. There is no compatibility
+  shim for mixed REST/gRPC fleets.
+- `CENTRAL_AGENT_URL` on the collector can stay as `https://muthur-api…`
+  (the scheme is stripped automatically) or be set to a bare `host:port`.
+
 ## [0.7.6] — 2026-06-28
 
 ### Fixed
