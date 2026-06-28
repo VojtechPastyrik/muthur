@@ -11,8 +11,8 @@ import (
 )
 
 // ServerTLSConfig is the file paths needed to bring up the brain's mTLS
-// listener. All three are required: cert-manager mounts them into the pod
-// from the muthur-system Secrets.
+// listener. cert-manager mounts them into the pod from the muthur-system
+// Secrets.
 type ServerTLSConfig struct {
 	// CertFile and KeyFile point at the brain's own server certificate,
 	// rotated by cert-manager. They are re-read on every TLS handshake when
@@ -20,10 +20,17 @@ type ServerTLSConfig struct {
 	CertFile string
 	KeyFile  string
 
-	// TrustRootFile is the vendor root CA. Client certs presented by
-	// collectors must chain to this single trust anchor. Loaded once at
-	// startup; root rotation is rare enough to justify a restart.
+	// TrustRootFile is the vendor root CA. Loaded once at startup; root
+	// rotation is rare enough to justify a restart.
 	TrustRootFile string
+
+	// IntermediateCAFile is the vendor intermediate that signs collector
+	// leaves. Optional but strongly recommended: without it, leaves signed
+	// by the intermediate cannot chain back to the root in TrustRootFile
+	// unless the collector also presents the intermediate in its handshake,
+	// which the bootstrap/renew flow does not currently do. Mounted from
+	// the same Secret the signer reads.
+	IntermediateCAFile string
 }
 
 // LoadServerTLS returns a *tls.Config configured for mTLS:
@@ -51,6 +58,11 @@ func LoadServerTLS(cfg ServerTLSConfig) (*tls.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load trust root: %w", err)
 	}
+	if cfg.IntermediateCAFile != "" {
+		if err := appendCertsFromFile(pool, cfg.IntermediateCAFile); err != nil {
+			return nil, fmt.Errorf("load intermediate CA into trust pool: %w", err)
+		}
+	}
 
 	return &tls.Config{
 		MinVersion:     tls.VersionTLS12,
@@ -64,15 +76,25 @@ func LoadServerTLS(cfg ServerTLSConfig) (*tls.Config, error) {
 // suitable for ClientCAs / RootCAs. Used for the vendor trust root that
 // authenticates collector client certs.
 func loadCertPool(path string) (*x509.CertPool, error) {
-	pem, err := os.ReadFile(path)
-	if err != nil {
+	pool := x509.NewCertPool()
+	if err := appendCertsFromFile(pool, path); err != nil {
 		return nil, err
 	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("no PEM certificates found in %s", path)
-	}
 	return pool, nil
+}
+
+// appendCertsFromFile reads a PEM file and adds every certificate it contains
+// to the supplied pool. Errors if the file is unreadable or contains no usable
+// PEM cert.
+func appendCertsFromFile(pool *x509.CertPool, path string) error {
+	pem, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if !pool.AppendCertsFromPEM(pem) {
+		return fmt.Errorf("no PEM certificates found in %s", path)
+	}
+	return nil
 }
 
 // certReloader hot-reloads a TLS keypair when the underlying file changes,

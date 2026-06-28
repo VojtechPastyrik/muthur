@@ -181,9 +181,10 @@ func run() error {
 	// TLS (verifying collector certs against the vendor trust root) and
 	// presents brain's own server cert (hot-reloaded by cert-manager).
 	tlsCfg, err := auth.LoadServerTLS(auth.ServerTLSConfig{
-		CertFile:      cfg.TLSServerCertFile,
-		KeyFile:       cfg.TLSServerKeyFile,
-		TrustRootFile: cfg.TLSTrustRootFile,
+		CertFile:           cfg.TLSServerCertFile,
+		KeyFile:            cfg.TLSServerKeyFile,
+		TrustRootFile:      cfg.TLSTrustRootFile,
+		IntermediateCAFile: cfg.IntermediateCAFile,
 	})
 	if err != nil {
 		return fmt.Errorf("load server TLS: %w", err)
