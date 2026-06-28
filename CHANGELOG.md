@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.5] — 2026-06-28
+
+### Added
+
+- `IngressRouteTCP` template for Traefik passthrough mTLS. Standard
+  `Ingress` with `router.tls.passthrough` annotations silently terminates
+  TLS with Traefik's default cert on v2/v3, breaking end-to-end mTLS.
+  Enable `ingressRouteTCP.enabled: true` (and turn `ingress.enabled` off)
+  to expose the brain via the Traefik CRD with `HostSNI` matching and
+  `tls.passthrough: true`.
+
 ## [0.7.4] — 2026-06-28
 
 ### Changed

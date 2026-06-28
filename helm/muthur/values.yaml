@@ -62,6 +62,18 @@ gateway:
 ingressRoute:
   enabled: false
 
+# --- Traefik IngressRouteTCP (mTLS passthrough) ---
+# Use this INSTEAD of `ingress` when you front the brain with Traefik v2/v3.
+# Standard Ingress annotations don't actually passthrough TLS on those
+# versions — only IngressRouteTCP with HostSNI does. The brain then sees the
+# raw client cert and can perform mTLS itself.
+ingressRouteTCP:
+  enabled: false
+  host: muthur-api.yourdomain.com
+  entryPoints:
+    - websecure
+  annotations: {}
+
 # --- Public ingress ---
 # Browser-facing hostname for /feedback (linked from notifications) and
 # /metrics. Terminates TLS at the ingress with a browser-trusted cert
