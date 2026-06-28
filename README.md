@@ -23,7 +23,7 @@ flowchart TD
         C[muthur-collector<br/>Cluster C]
     end
 
-    M[muthur<br/>home cluster<br/>POST /ingest → Claude → routing]
+    M[muthur<br/>home cluster<br/>gRPC Brain.Ingest → Claude → routing]
 
     A --> M
     B --> M
@@ -107,25 +107,36 @@ LLM_BASE_URL=http://localhost:11434/v1
 # no API key needed
 ```
 
-### HTTP endpoints
+### API surface
 
-The brain terminates TLS itself (`tls.VerifyClientCertIfGiven`). Routes that
-need an authenticated caller require a verified client certificate signed by
-the vendor intermediate CA; the rest accept anonymous TLS so first-time
-bootstraps and Prometheus scrapes work.
+The brain runs two listeners. The mTLS port (default 8080) serves the gRPC
+`monitoring.v1.Brain` service. The public HTTP port (default 8081) keeps the
+browser-facing endpoints. TLS on the gRPC port is `VerifyClientCertIfGiven`
+so `BootstrapCert` can run cert-less; every other RPC requires a verified
+client cert signed by the vendor intermediate CA.
 
-| Method | Path               | Auth                    | Purpose                                                                                |
-|--------|--------------------|-------------------------|----------------------------------------------------------------------------------------|
-| POST   | `/ingest`          | mTLS + replay headers   | Protobuf `AlertPayload` from collectors; brain enforces `payload.cluster_id == cert.cluster_id`. |
-| POST   | `/sign-csr`        | mTLS + replay headers   | Renewal: takes a PEM CSR, returns a fresh leaf signed by the intermediate.             |
-| POST   | `/bootstrap-cert`  | One-shot bootstrap token | First enrolment: SHA-256(token) must match a tenant entry; mints the initial leaf.      |
-| GET    | `/feedback`        | _none_                  | Operator feedback callback (`?id=..&verdict=useful\|wrong`).                            |
-| GET    | `/metrics`         | _none_                  | Prometheus metrics.                                                                    |
-| GET    | `/healthz`         | _none_                  | Liveness probe (kubelet has no client cert).                                           |
+**gRPC service** (`monitoring.v1.Brain`, mTLS port):
 
-Replay headers required on every authenticated request:
-`X-Muthur-Timestamp` (Unix seconds, ±5 min by default) and
-`X-Muthur-Nonce` (≥32 hex chars, single-use per identity).
+| RPC              | Auth                       | Purpose                                                                                                  |
+|------------------|----------------------------|----------------------------------------------------------------------------------------------------------|
+| `Ingest`         | mTLS + replay metadata     | `AlertPayload` from collectors; brain enforces `payload.cluster_id == cert.cluster_id`.                  |
+| `SignCSR`        | mTLS + replay metadata     | Renewal: takes a PEM CSR, returns a fresh leaf signed by the intermediate.                               |
+| `BootstrapCert`  | One-shot bootstrap token   | First enrolment: SHA-256(token) must match a tenant entry; mints the initial leaf. No client cert needed. |
+
+Reflection is registered, so operators can introspect the service in
+production with `grpcurl -insecure muthur-api:443 list`.
+
+**HTTP endpoints** (public HTTP port):
+
+| Method | Path        | Purpose                                                       |
+|--------|-------------|---------------------------------------------------------------|
+| GET    | `/feedback` | Operator feedback callback (`?id=..&verdict=useful\|wrong`).  |
+| GET    | `/metrics`  | Prometheus metrics.                                           |
+| GET    | `/healthz`  | Liveness probe (kubelet has no client cert).                  |
+
+Replay metadata required on every authenticated RPC:
+`x-muthur-timestamp` (Unix seconds, ±5 min by default) and
+`x-muthur-nonce` (≥32 hex chars, single-use per identity).
 
 ### Configuration (env)
 
