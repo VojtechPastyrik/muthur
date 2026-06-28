@@ -7,6 +7,18 @@
   GetCertificate file-mtime callback without a restart.
 */}}
 {{- if .Values.serverCert.enabled }}
+{{- /*
+  Pick the public hostname from whichever ingress flavor is enabled.
+  Standard Ingress, Traefik IngressRouteTCP, and Gateway-API TLSRoute
+  each carry the host in a different field; collapse them here so the
+  server cert always contains the right SAN regardless of which flavor
+  the operator picked.
+*/}}
+{{- $publicHost := "" }}
+{{- if .Values.ingress.enabled }}{{ $publicHost = .Values.ingress.host }}
+{{- else if .Values.ingressRouteTCP.enabled }}{{ $publicHost = .Values.ingressRouteTCP.host }}
+{{- else if .Values.tlsRoute.enabled }}{{ $publicHost = .Values.tlsRoute.host }}
+{{- end }}
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -20,10 +32,10 @@ spec:
   privateKey:
     algorithm: ECDSA
     size: 256
-  commonName: {{ .Values.serverCert.commonName | default .Values.ingress.host | quote }}
+  commonName: {{ .Values.serverCert.commonName | default $publicHost | quote }}
   dnsNames:
-    {{- if .Values.ingress.host }}
-    - {{ .Values.ingress.host | quote }}
+    {{- if $publicHost }}
+    - {{ $publicHost | quote }}
     {{- end }}
     {{- range .Values.serverCert.extraDnsNames }}
     - {{ . | quote }}

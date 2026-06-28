@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.6] — 2026-06-28
+
+### Fixed
+
+- Server cert SAN now picks the public hostname from whichever ingress
+  flavor is enabled (`ingress.host`, `ingressRouteTCP.host`, or
+  `tlsRoute.host`). 0.7.5 only looked at `ingress.host`, so operators
+  who disabled standard Ingress in favor of IngressRouteTCP ended up
+  with a cert whose SAN defaulted to the placeholder
+  `muthur.yourdomain.com`, breaking collector verification with
+  `x509: certificate is valid for muthur.yourdomain.com, …, not
+  muthur-api.pastyrik.dev`.
+
 ## [0.7.5] — 2026-06-28
 
 ### Added
