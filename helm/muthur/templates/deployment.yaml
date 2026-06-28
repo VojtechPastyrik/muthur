@@ -20,6 +20,11 @@ spec:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
+        # fsGroup makes kubelet chgrp mounted Secret/ConfigMap files so the
+        # non-root user can read them. Without it, cert-manager-written
+        # Secret files (root:root, mode 0400) cannot be opened by uid 65532
+        # and the TLS listener crashes with "permission denied".
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:

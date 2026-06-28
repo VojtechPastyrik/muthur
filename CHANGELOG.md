@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] — 2026-06-28
+
+### Fixed
+
+- Add `fsGroup: 65532` to the brain pod's security context. cert-manager
+  writes Secret data with `root:root` ownership and the chart mounts cert
+  files at mode `0400`; without `fsGroup` the non-root container (uid
+  65532) hits `permission denied: /secrets/tls/server/tls.crt` and the
+  TLS listener fails to start. `fsGroup` triggers kubelet to chgrp the
+  mounted files so the brain user can read them.
+
 ## [0.7.1] — 2026-06-28
 
 ### Fixed
