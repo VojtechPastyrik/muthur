@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.3] — 2026-06-28
+
+### Added
+
+- **Dual-listener brain.** A second router serves `/feedback`, `/metrics`,
+  and `/healthz` as plain HTTP on a separate port (`PUBLIC_PORT`, default
+  `8081`). The mTLS listener on `PORT` keeps owning the collector
+  endpoints. This unblocks the browser-clickable feedback link from
+  notifications: the public-facing ingress can terminate TLS with a
+  browser-trusted CA (Let's Encrypt, Cloudflare) without colliding with
+  the mTLS passthrough on the API port.
+- New chart values: `service.publicPort` (default `8081`) and
+  `publicIngress` block. Set `publicIngress.enabled: true` and supply a
+  hostname to expose `/feedback` on a browser-friendly DNS name.
+- Kubelet probes now hit the plain-HTTP listener, so they no longer need
+  to wrestle with the mTLS handshake.
+
+### Changed
+
+- Service exposes both ports (`https` 8080, `http` 8081) so internal
+  consumers (Prometheus ServiceMonitor, /feedback within-cluster) pick
+  the right one by name.
+
 ## [0.7.2] — 2026-06-28
 
 ### Fixed

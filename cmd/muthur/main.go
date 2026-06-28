@@ -206,17 +206,16 @@ func run() error {
 	bootstrap := auth.NewBootstrapHandler(tenants, signer, st, cfg.RedisPrefix, logger)
 	renew := auth.NewRenewHandler(tenants, signer, replayGuard, logger)
 
-	// HTTP server
-	r := chi.NewRouter()
-	r.Use(middleware.Recoverer)
-	r.Use(middleware.RealIP)
-
 	handler := ingest.NewHandler(replayGuard, pipe, logger)
 
-	// Routes requiring an authenticated client identity (mTLS-verified) are
-	// scoped to this group. /bootstrap-cert and the public-facing endpoints
-	// stay outside so a brand-new collector (no cert yet) can enrol.
-	r.Group(func(r chi.Router) {
+	// --- mTLS listener ---
+	// Routes here serve collectors over a verified client cert. They live on
+	// the TLS-terminating port (default 8080) behind passthrough ingress.
+	mtlsRouter := chi.NewRouter()
+	mtlsRouter.Use(middleware.Recoverer)
+	mtlsRouter.Use(middleware.RealIP)
+
+	mtlsRouter.Group(func(r chi.Router) {
 		r.Use(auth.Middleware(logger))
 		r.Post("/ingest", handler.ServeHTTP)
 		r.Post("/sign-csr", renew.ServeHTTP)
@@ -226,29 +225,43 @@ func run() error {
 	// token in the request body proves the caller is the legitimate new
 	// collector for that cluster_id. The single-use enforcement in
 	// BootstrapHandler stops anyone from grinding the endpoint.
-	r.Post("/bootstrap-cert", bootstrap.ServeHTTP)
+	mtlsRouter.Post("/bootstrap-cert", bootstrap.ServeHTTP)
 
-	// Operator feedback callback (GET /feedback?id=..&verdict=useful|wrong).
-	r.Get("/feedback", fb.ServeHTTP)
+	// --- Public listener ---
+	// Plain HTTP for the browser-facing /feedback link emitted into
+	// notifications, kubelet probes, and the Prometheus scrape. Lives on a
+	// separate port (default 8081) so a public-facing ingress (Cloudflare
+	// proxy, Let's Encrypt termination, …) can front it without colliding
+	// with the mTLS passthrough that owns the API port.
+	publicRouter := chi.NewRouter()
+	publicRouter.Use(middleware.Recoverer)
+	publicRouter.Use(middleware.RealIP)
 
-	// Self-observability: Prometheus metrics.
-	r.Handle("/metrics", promhttp.Handler())
-
-	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
+	publicRouter.Get("/feedback", fb.ServeHTTP)
+	publicRouter.Handle("/metrics", promhttp.Handler())
+	publicRouter.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
 
-	addr := fmt.Sprintf(":%s", cfg.Port)
-	srv := &http.Server{Addr: addr, Handler: r, TLSConfig: tlsCfg}
+	mtlsAddr := fmt.Sprintf(":%s", cfg.Port)
+	publicAddr := fmt.Sprintf(":%s", cfg.PublicPort)
+	mtlsSrv := &http.Server{Addr: mtlsAddr, Handler: mtlsRouter, TLSConfig: tlsCfg}
+	publicSrv := &http.Server{Addr: publicAddr, Handler: publicRouter}
 
 	// Listen in the background so the main goroutine can wait for a shutdown
-	// signal and drain in-flight work. Cert + key files are sourced through
-	// tlsCfg.GetCertificate, so the strings here can be empty.
-	serveErr := make(chan error, 1)
+	// signal and drain in-flight work. Both listeners report through the
+	// same serveErr channel — the first failure exits the process.
+	serveErr := make(chan error, 2)
 	go func() {
-		logger.Info("starting muthur (mTLS)", zap.String("addr", addr))
-		if err := srv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+		logger.Info("starting muthur (mTLS)", zap.String("addr", mtlsAddr))
+		if err := mtlsSrv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+			serveErr <- err
+		}
+	}()
+	go func() {
+		logger.Info("starting muthur (public)", zap.String("addr", publicAddr))
+		if err := publicSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			serveErr <- err
 		}
 	}()
@@ -266,9 +279,10 @@ func run() error {
 	shCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Stop accepting new requests, flush buffered incidents, then wait for
-	// in-flight alert processing to finish (bounded by shCtx).
-	_ = srv.Shutdown(shCtx)
+	// Stop accepting new requests on BOTH listeners, flush buffered incidents,
+	// then wait for in-flight processing to drain.
+	_ = publicSrv.Shutdown(shCtx)
+	_ = mtlsSrv.Shutdown(shCtx)
 	pipe.Drain()
 
 	done := make(chan struct{})

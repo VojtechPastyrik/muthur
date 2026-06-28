@@ -40,26 +40,28 @@ spec:
             - name: https
               containerPort: 8080
               protocol: TCP
-          # Probes use HTTPS now that the listener is TLS. The kubelet does not
-          # have a client cert; /healthz lives outside the auth middleware so
-          # an anonymous TLS connect with verification skipped is sufficient.
+            - name: http-public
+              containerPort: 8081
+              protocol: TCP
+          # Probes go to the plain-HTTP listener so the kubelet (which has no
+          # client cert) doesn't have to wrestle with the mTLS handshake.
           livenessProbe:
             httpGet:
               path: /healthz
-              port: https
-              scheme: HTTPS
+              port: http-public
             initialDelaySeconds: 5
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /healthz
-              port: https
-              scheme: HTTPS
+              port: http-public
             initialDelaySeconds: 2
             periodSeconds: 5
           env:
             - name: PORT
               value: "8080"
+            - name: PUBLIC_PORT
+              value: "8081"
             - name: LOG_LEVEL
               value: {{ .Values.config.logLevel | quote }}
             - name: ANTHROPIC_MODEL

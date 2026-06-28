@@ -12,7 +12,17 @@ import (
 // Notification receivers are NOT configured here — they are loaded from
 // the config file pointed to by ConfigFile.
 type Config struct {
-	Port       string
+	// Port is the mTLS listener that collectors hit for /ingest,
+	// /sign-csr, and /bootstrap-cert. Behind a TLS-passthrough ingress.
+	Port string
+
+	// PublicPort is the plain-HTTP listener carrying browser-facing
+	// /feedback links, kubelet probes, and Prometheus scrapes. Separate
+	// listener so a public ingress can terminate TLS with a CA the browser
+	// trusts (Let's Encrypt, Cloudflare) without colliding with the mTLS
+	// passthrough on Port.
+	PublicPort string
+
 	LogLevel   string
 	LLMTimeout time.Duration
 
@@ -186,6 +196,7 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		Port:                     envOr("PORT", "8080"),
+		PublicPort:               envOr("PUBLIC_PORT", "8081"),
 		LogLevel:                 envOr("LOG_LEVEL", "info"),
 		TLSServerCertFile:        os.Getenv("TLS_SERVER_CERT_FILE"),
 		TLSServerKeyFile:         os.Getenv("TLS_SERVER_KEY_FILE"),

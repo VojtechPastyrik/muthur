@@ -7,7 +7,11 @@ image:
 
 service:
   type: ClusterIP
+  # mTLS port — collector traffic. Passthrough ingress points here.
   port: 8080
+  # Plain-HTTP port — /feedback, /metrics, /healthz. Public ingress points
+  # here and terminates TLS with a browser-trusted cert.
+  publicPort: 8081
 
 # Prometheus Operator ServiceMonitor for the /metrics endpoint. Enable when
 # kube-prometheus-stack (or any Prometheus Operator) is present.
@@ -57,6 +61,20 @@ gateway:
 
 ingressRoute:
   enabled: false
+
+# --- Public ingress ---
+# Browser-facing hostname for /feedback (linked from notifications) and
+# /metrics. Terminates TLS at the ingress with a browser-trusted cert
+# (cert-manager / Let's Encrypt / Cloudflare). Hits the brain's plain-HTTP
+# listener on service.publicPort.
+publicIngress:
+  enabled: false
+  className: traefik
+  host: muthur-feed.yourdomain.com
+  tls:
+    enabled: true
+    secretName: muthur-feed-tls
+  annotations: {}
   entryPoints:
     - websecure
   host: muthur.yourdomain.com

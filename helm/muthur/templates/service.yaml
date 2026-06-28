@@ -7,11 +7,19 @@ metadata:
 spec:
   type: {{ .Values.service.type }}
   ports:
-    # Port still named "http" by convention but the listener terminates TLS:
-    # in-cluster callers must dial https://{service}:{port}. ServiceMonitor and
-    # ingress templates handle the scheme switch.
+    # mTLS port — collectors hit this for /ingest, /sign-csr, /bootstrap-cert.
+    # The brain terminates TLS itself, so in-cluster callers dial
+    # https://{service}:{port}. ServiceMonitor and ingress templates honour
+    # the scheme switch.
     - port: {{ .Values.service.port }}
       targetPort: https
+      protocol: TCP
+      name: https
+    # Plain-HTTP port — /feedback for browser clicks from notifications,
+    # /metrics for Prometheus, /healthz for kubelet probes. Public-facing
+    # ingress can terminate TLS here with a CA the browser already trusts.
+    - port: {{ .Values.service.publicPort }}
+      targetPort: http-public
       protocol: TCP
       name: http
   selector:

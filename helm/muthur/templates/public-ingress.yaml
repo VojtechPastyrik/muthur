@@ -1,0 +1,46 @@
+{{- /*
+  Public-facing ingress for the plain-HTTP listener.
+
+  Serves the browser-clickable /feedback link emitted into notifications
+  and the Prometheus scrape endpoint. TLS is terminated here by the
+  ingress controller using a browser-trusted CA (Let's Encrypt /
+  cert-manager / Cloudflare Origin) — the backend pod listens plain HTTP
+  on the public-port so kubelet probes and browsers don't need to know
+  about the vendor CA.
+
+  Separate from the mTLS ingress because that one runs TLS passthrough
+  for the API port and cannot also terminate for the public hostname.
+*/}}
+{{- if .Values.publicIngress.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "muthur.fullname" . }}-public
+  labels:
+    {{- include "muthur.labels" . | nindent 4 }}
+  {{- with .Values.publicIngress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.publicIngress.className }}
+  ingressClassName: {{ .Values.publicIngress.className }}
+  {{- end }}
+  {{- if .Values.publicIngress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.publicIngress.host }}
+      secretName: {{ .Values.publicIngress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.publicIngress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "muthur.fullname" . }}
+                port:
+                  number: {{ .Values.service.publicPort }}
+{{- end }}
