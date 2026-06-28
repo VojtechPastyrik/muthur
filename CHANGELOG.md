@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] — 2026-06-28
+
+### Fixed
+
+- mTLS trust pool now includes the vendor intermediate CA. The 0.8.0
+  release loaded only the root cert into ClientCAs, so leaves signed by
+  the intermediate (which is what bootstrap/renew issues) had no chain
+  to walk back to the root. The previous REST listener tolerated this;
+  the stricter gRPC handshake surfaced it as `tls: unknown certificate
+  authority`. Collectors on 0.8.0 no longer need a chart bump — only
+  the brain image moves.
+
 ## [0.8.0] — 2026-06-28
 
 ### Changed
