@@ -109,12 +109,23 @@ LLM_BASE_URL=http://localhost:11434/v1
 
 ### HTTP endpoints
 
-| Method | Path        | Purpose                                                        |
-|--------|-------------|---------------------------------------------------------------|
-| POST   | `/ingest`   | Receive protobuf alert payloads from collectors               |
-| GET    | `/feedback` | Operator feedback callback (`?id=..&verdict=useful\|wrong`)    |
-| GET    | `/metrics`  | Prometheus metrics                                            |
-| GET    | `/healthz`  | Liveness probe                                                 |
+The brain terminates TLS itself (`tls.VerifyClientCertIfGiven`). Routes that
+need an authenticated caller require a verified client certificate signed by
+the vendor intermediate CA; the rest accept anonymous TLS so first-time
+bootstraps and Prometheus scrapes work.
+
+| Method | Path               | Auth                    | Purpose                                                                                |
+|--------|--------------------|-------------------------|----------------------------------------------------------------------------------------|
+| POST   | `/ingest`          | mTLS + replay headers   | Protobuf `AlertPayload` from collectors; brain enforces `payload.cluster_id == cert.cluster_id`. |
+| POST   | `/sign-csr`        | mTLS + replay headers   | Renewal: takes a PEM CSR, returns a fresh leaf signed by the intermediate.             |
+| POST   | `/bootstrap-cert`  | One-shot bootstrap token | First enrolment: SHA-256(token) must match a tenant entry; mints the initial leaf.      |
+| GET    | `/feedback`        | _none_                  | Operator feedback callback (`?id=..&verdict=useful\|wrong`).                            |
+| GET    | `/metrics`         | _none_                  | Prometheus metrics.                                                                    |
+| GET    | `/healthz`         | _none_                  | Liveness probe (kubelet has no client cert).                                           |
+
+Replay headers required on every authenticated request:
+`X-Muthur-Timestamp` (Unix seconds, ±5 min by default) and
+`X-Muthur-Nonce` (≥32 hex chars, single-use per identity).
 
 ### Configuration (env)
 
@@ -148,6 +159,12 @@ Beyond the existing settings, the new features add:
 | `INCIDENT_TTL` | `720h` | How long incident records are kept |
 | `NOTIFY_EVIDENCE_ENABLED` | `true` | Attach redacted log tail + key metrics to notifications |
 | `NOTIFY_LOG_LINES` | `8` | Max redacted log lines shown as evidence |
+| `TLS_SERVER_CERT_FILE` | _(required)_ | Server cert path. Cert is hot-reloaded by file mtime. |
+| `TLS_SERVER_KEY_FILE` | _(required)_ | Server key path. |
+| `TLS_TRUST_ROOT_FILE` | _(required)_ | Vendor root CA path. Brain verifies collector client certs against this anchor. |
+| `INTERMEDIATE_CA_FILE` | _(required)_ | Intermediate CA cert path used to sign collector CSRs. |
+| `INTERMEDIATE_KEY_FILE` | _(required)_ | Intermediate CA private key path. |
+| `AUTH_REPLAY_WINDOW` | `5m` | Accepted clock-skew window for `X-Muthur-Timestamp`; nonce cache TTL is 2×. |
 
 ## Prerequisites
 
