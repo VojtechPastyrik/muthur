@@ -8,12 +8,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- `IngressRouteTCP` template for Traefik passthrough mTLS. Standard
-  `Ingress` with `router.tls.passthrough` annotations silently terminates
-  TLS with Traefik's default cert on v2/v3, breaking end-to-end mTLS.
-  Enable `ingressRouteTCP.enabled: true` (and turn `ingress.enabled` off)
-  to expose the brain via the Traefik CRD with `HostSNI` matching and
-  `tls.passthrough: true`.
+- Multiple ingress flavors for mTLS passthrough. Pick the one that
+  matches your cluster's ingress stack:
+  - **Traefik:** `ingressRouteTCP.enabled: true` (HostSNI matching +
+    tls.passthrough). Required for v2/v3 — standard Ingress annotations
+    silently terminate with the Traefik default cert.
+  - **Gateway API (Envoy Gateway / Cilium / …):** `tlsRoute.enabled: true`.
+    Pair with a Gateway whose listener has tls.mode=Passthrough.
+  - **NGINX Ingress:** keep `ingress.enabled: true` and add
+    `nginx.ingress.kubernetes.io/ssl-passthrough: "true"` to
+    ingress.annotations. The controller must be started with
+    `--enable-ssl-passthrough`.
 
 ## [0.7.4] — 2026-06-28
 

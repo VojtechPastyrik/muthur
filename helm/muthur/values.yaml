@@ -74,6 +74,22 @@ ingressRouteTCP:
     - websecure
   annotations: {}
 
+# --- Gateway API TLSRoute (mTLS passthrough via Gateway API) ---
+# Use when fronted by Envoy Gateway / Cilium / any Gateway-API controller.
+# Pair with a Gateway whose listener has tls.mode: Passthrough.
+tlsRoute:
+  enabled: false
+  host: muthur-api.yourdomain.com
+  parentRefs:
+    - name: muthur-gateway
+      namespace: envoy-gateway-system
+
+# --- NGINX Ingress note ---
+# NGINX-ingress passthrough uses the standard `ingress` block above plus
+# the annotation `nginx.ingress.kubernetes.io/ssl-passthrough: "true"`.
+# The controller must be started with `--enable-ssl-passthrough`. Add to
+# ingress.annotations, no separate template needed.
+
 # --- Public ingress ---
 # Browser-facing hostname for /feedback (linked from notifications) and
 # /metrics. Terminates TLS at the ingress with a browser-trusted cert

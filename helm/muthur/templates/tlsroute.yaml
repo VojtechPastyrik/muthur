@@ -1,0 +1,30 @@
+{{- /*
+  Gateway API TLSRoute for mTLS passthrough.
+
+  Use this when the cluster front-ends with Envoy Gateway / Cilium /
+  any controller that implements the Gateway API. Pair with a Gateway
+  whose listener has `tls.mode: Passthrough` — the controller then
+  streams raw TLS to the brain, which terminates mTLS itself.
+
+  HTTPRoute (HTTP L7) cannot passthrough TLS; only TLSRoute (TCP L4 with
+  SNI matching) preserves the client certificate end-to-end.
+*/}}
+{{- if .Values.tlsRoute.enabled -}}
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TLSRoute
+metadata:
+  name: {{ include "muthur.fullname" . }}
+  labels:
+    {{- include "muthur.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    {{- range .Values.tlsRoute.parentRefs }}
+    - {{- toYaml . | nindent 6 }}
+    {{- end }}
+  hostnames:
+    - {{ .Values.tlsRoute.host | quote }}
+  rules:
+    - backendRefs:
+        - name: {{ include "muthur.fullname" . }}
+          port: {{ .Values.service.port }}
+{{- end }}
