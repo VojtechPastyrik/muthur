@@ -134,9 +134,21 @@ spec:
               value: {{ .Values.config.correlationMaxGroup | quote }}
             - name: FEEDBACK_FEW_SHOT
               value: {{ .Values.config.feedbackFewShot | quote }}
-            {{- if .Values.config.publicUrl }}
+            {{- /*
+              Feedback link base. Explicit config.publicUrl wins; otherwise
+              we derive it from the publicIngress hostname so operators
+              don't have to declare the same URL twice. Empty result =
+              feedback links omitted (brain checks for empty at startup).
+            */}}
+            {{- $publicUrl := .Values.config.publicUrl }}
+            {{- if and (not $publicUrl) .Values.publicIngress.enabled .Values.publicIngress.host }}
+              {{- $scheme := "http" }}
+              {{- if .Values.publicIngress.tls.enabled }}{{ $scheme = "https" }}{{ end }}
+              {{- $publicUrl = printf "%s://%s" $scheme .Values.publicIngress.host }}
+            {{- end }}
+            {{- if $publicUrl }}
             - name: MUTHUR_PUBLIC_URL
-              value: {{ .Values.config.publicUrl | quote }}
+              value: {{ $publicUrl | quote }}
             {{- end }}
             {{- if .Values.redis.url }}
             - name: REDIS_URL

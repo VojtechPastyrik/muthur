@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] — 2026-06-28
+
+### Changed
+
+- `config.publicUrl` is now optional. When unset, the deployment template
+  derives `MUTHUR_PUBLIC_URL` from `publicIngress.host` (with the right
+  scheme based on `publicIngress.tls.enabled`). Cuts the duplicate
+  hostname out of values without changing brain behaviour. Operators can
+  still override by setting `config.publicUrl` explicitly.
+
 ## [0.7.3] — 2026-06-28
 
 ### Added
