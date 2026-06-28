@@ -35,5 +35,5 @@ spec:
     - {{ printf "%s.%s.svc.cluster.local" (include "muthur.fullname" .) .Release.Namespace }}
   issuerRef:
     name: {{ .Values.ca.intermediate.issuerName }}
-    kind: ClusterIssuer
+    kind: Issuer
 {{- end }}

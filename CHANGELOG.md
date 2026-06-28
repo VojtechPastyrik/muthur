@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] — 2026-06-28
+
+### Fixed
+
+- `muthur-intermediate` is now a namespaced `Issuer` rather than a
+  `ClusterIssuer`. The previous form failed at install time because
+  cert-manager's default `--cluster-resource-namespace` (`cert-manager`)
+  does not match the release namespace where the intermediate CA Secret
+  actually lives, leaving the brain's own server cert stuck on
+  `ErrInitIssuer: secrets "muthur-intermediate-ca-tls" not found`.
+  Out-of-cluster collectors do not need the issuer — they exchange
+  CSRs via `/bootstrap-cert` and `/sign-csr` instead.
+
 ## [0.7.0] — 2026-06-28
 
 Theme: collector authentication is now mutual TLS. The shared per-cluster

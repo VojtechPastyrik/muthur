@@ -85,13 +85,19 @@ spec:
     kind: Issuer
 ---
 {{- /*
-  ClusterIssuer (not Issuer) so that in-cluster collectors in any namespace
-  can reference it for their own Certificate CRs. The intermediate Secret it
-  reads must live in cert-manager's namespace; the values let operators
-  override that if needed.
+  Namespaced Issuer used by the brain's own server cert. ClusterIssuer of
+  type `ca:` would look for the Secret in cert-manager's namespace (default
+  --cluster-resource-namespace), not in this release namespace where the
+  intermediate Secret actually lives, so it cannot be used without extra
+  cluster-wide reconfiguration. Stick with a namespaced Issuer so the
+  install is self-contained.
+
+  Out-of-cluster collectors do NOT need access to this Issuer: they
+  exchange CSRs with the brain over the /bootstrap-cert and /sign-csr
+  endpoints, which sign with the same intermediate key.
 */}}
 apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
+kind: Issuer
 metadata:
   name: {{ .Values.ca.intermediate.issuerName }}
   labels:
