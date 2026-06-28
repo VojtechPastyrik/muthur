@@ -187,6 +187,24 @@ func run() error {
 	// across replicas when a Redis/Dragonfly backend is configured.
 	replayGuard := auth.NewReplayGuard(st, cfg.ReplayWindow, cfg.RedisPrefix)
 
+	// Intermediate CA used to sign collector CSRs. The signer is shared
+	// between /bootstrap-cert (first issuance) and /sign-csr (renewals).
+	signer, err := auth.NewSignerFromFiles(cfg.IntermediateCAFile, cfg.IntermediateKeyFile)
+	if err != nil {
+		return fmt.Errorf("load intermediate CA: %w", err)
+	}
+
+	// Tenants are loaded from the same YAML config file the receivers live in
+	// (vendor-managed via GitOps). The index is built once at startup; a
+	// restart picks up additions, revocations, and bootstrap token rotations.
+	tenants, err := auth.NewTenants(fileCfg.Tenants)
+	if err != nil {
+		return fmt.Errorf("load tenants: %w", err)
+	}
+	logger.Info("tenants loaded", zap.Int("count", len(fileCfg.Tenants)))
+
+	bootstrap := auth.NewBootstrapHandler(tenants, signer, st, cfg.RedisPrefix, logger)
+
 	// HTTP server
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
@@ -201,6 +219,12 @@ func run() error {
 		r.Use(auth.Middleware(logger))
 		r.Post("/ingest", handler.ServeHTTP)
 	})
+
+	// /bootstrap-cert intentionally has no auth middleware: the bootstrap
+	// token in the request body proves the caller is the legitimate new
+	// collector for that cluster_id. The single-use enforcement in
+	// BootstrapHandler stops anyone from grinding the endpoint.
+	r.Post("/bootstrap-cert", bootstrap.ServeHTTP)
 
 	// Operator feedback callback (GET /feedback?id=..&verdict=useful|wrong).
 	r.Get("/feedback", fb.ServeHTTP)

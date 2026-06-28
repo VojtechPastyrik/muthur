@@ -6,6 +6,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/VojtechPastyrik/muthur/internal/auth"
 	"github.com/VojtechPastyrik/muthur/internal/notify"
 	"github.com/VojtechPastyrik/muthur/internal/routing"
 )
@@ -15,6 +16,12 @@ import (
 type FileConfig struct {
 	Receivers []notify.ReceiverConfig `yaml:"receivers"`
 	Routing   routing.Config          `yaml:"routing"`
+
+	// Tenants enumerates the collectors authorised to bootstrap. Each entry
+	// carries the SHA-256 of a one-time bootstrap token (vendor-issued at
+	// onboarding) plus the lifetime cert-manager should target for that
+	// tenant's leaves.
+	Tenants []auth.Tenant `yaml:"tenants"`
 }
 
 // Load reads and parses the config file at the given path.
