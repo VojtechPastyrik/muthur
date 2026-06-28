@@ -13,17 +13,31 @@ func clearLLMEnv(t *testing.T) {
 	for _, k := range []string{
 		"LLM_PROVIDER", "LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY_FILE",
 		"LLM_SCHEMA_MODE", "LLM_TEMPERATURE", "LLM_MAX_RETRIES",
-		"ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "COLLECTOR_TOKENS",
+		"ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
+		"TLS_SERVER_CERT_FILE", "TLS_SERVER_KEY_FILE", "TLS_TRUST_ROOT_FILE",
+		"INTERMEDIATE_CA_FILE", "INTERMEDIATE_KEY_FILE",
 	} {
 		t.Setenv(k, "")
 		os.Unsetenv(k)
 	}
 }
 
+// setupTLS satisfies Load's mTLS-mandatory check without reading the files.
+// Load only verifies the env vars are non-empty; the TLS plumbing reads the
+// files later (at server startup), so dummy paths are fine here.
+func setupTLS(t *testing.T) {
+	t.Helper()
+	t.Setenv("TLS_SERVER_CERT_FILE", "/tls/server.crt")
+	t.Setenv("TLS_SERVER_KEY_FILE", "/tls/server.key")
+	t.Setenv("TLS_TRUST_ROOT_FILE", "/tls/root.crt")
+	t.Setenv("INTERMEDIATE_CA_FILE", "/tls/intermediate.crt")
+	t.Setenv("INTERMEDIATE_KEY_FILE", "/tls/intermediate.key")
+}
+
 func TestLoad_DefaultsToAnthropic(t *testing.T) {
 	clearLLMEnv(t)
 	t.Setenv("ANTHROPIC_API_KEY", "sk-legacy")
-	t.Setenv("COLLECTOR_TOKENS", "cluster-a:tok")
+	setupTLS(t)
 
 	cfg, err := Load()
 	if err != nil {
@@ -51,7 +65,7 @@ func TestLoad_DefaultsToAnthropic(t *testing.T) {
 
 func TestLoad_AnthropicRequiresKey(t *testing.T) {
 	clearLLMEnv(t)
-	t.Setenv("COLLECTOR_TOKENS", "cluster-a:tok")
+	setupTLS(t)
 
 	if _, err := Load(); err == nil {
 		t.Error("want error when anthropic provider has no key")
@@ -63,7 +77,7 @@ func TestLoad_OpenAICompatibleNoKey(t *testing.T) {
 	t.Setenv("LLM_PROVIDER", "openai-compatible")
 	t.Setenv("LLM_BASE_URL", "http://ollama:11434/v1")
 	t.Setenv("LLM_MODEL", "qwen2.5")
-	t.Setenv("COLLECTOR_TOKENS", "cluster-a:tok")
+	setupTLS(t)
 
 	cfg, err := Load()
 	if err != nil {
@@ -84,7 +98,7 @@ func TestLoad_OpenAICompatibleRequiresBaseAndModel(t *testing.T) {
 	clearLLMEnv(t)
 	t.Setenv("LLM_PROVIDER", "openai-compatible")
 	t.Setenv("LLM_MODEL", "qwen2.5")
-	t.Setenv("COLLECTOR_TOKENS", "cluster-a:tok")
+	setupTLS(t)
 
 	if _, err := Load(); err == nil {
 		t.Error("want error when openai-compatible has no base_url")
@@ -99,7 +113,7 @@ func TestLoad_APIKeyFromFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("LLM_API_KEY_FILE", keyPath)
-	t.Setenv("COLLECTOR_TOKENS", "cluster-a:tok")
+	setupTLS(t)
 
 	cfg, err := Load()
 	if err != nil {
@@ -113,9 +127,49 @@ func TestLoad_APIKeyFromFile(t *testing.T) {
 func TestLoad_UnknownProvider(t *testing.T) {
 	clearLLMEnv(t)
 	t.Setenv("LLM_PROVIDER", "gemini")
-	t.Setenv("COLLECTOR_TOKENS", "cluster-a:tok")
+	setupTLS(t)
 
 	if _, err := Load(); err == nil {
 		t.Error("want error for unknown provider")
+	}
+}
+
+func TestLoad_MissingTLSServerFilesFails(t *testing.T) {
+	clearLLMEnv(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk-legacy")
+	// Only intermediate set; server TLS missing → Load must refuse.
+	t.Setenv("INTERMEDIATE_CA_FILE", "/tls/intermediate.crt")
+	t.Setenv("INTERMEDIATE_KEY_FILE", "/tls/intermediate.key")
+
+	if _, err := Load(); err == nil {
+		t.Error("want error when TLS_SERVER_* env vars are unset")
+	}
+}
+
+func TestLoad_MissingIntermediateFails(t *testing.T) {
+	clearLLMEnv(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk-legacy")
+	t.Setenv("TLS_SERVER_CERT_FILE", "/tls/server.crt")
+	t.Setenv("TLS_SERVER_KEY_FILE", "/tls/server.key")
+	t.Setenv("TLS_TRUST_ROOT_FILE", "/tls/root.crt")
+	// Intermediate missing → Load must refuse: without it /sign-csr cannot
+	// mint renewals.
+
+	if _, err := Load(); err == nil {
+		t.Error("want error when INTERMEDIATE_* env vars are unset")
+	}
+}
+
+func TestLoad_ReplayWindowDefault(t *testing.T) {
+	clearLLMEnv(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk-legacy")
+	setupTLS(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ReplayWindow.String() != "5m0s" {
+		t.Errorf("replay window = %s, want 5m0s default", cfg.ReplayWindow)
 	}
 }

@@ -15,7 +15,26 @@ type Config struct {
 	Port       string
 	LogLevel   string
 	LLMTimeout time.Duration
-	Collectors []CollectorConfig
+
+	// mTLS server paths. All three are required: collectors authenticate via
+	// a client cert that chains to TrustRootFile, and they verify the brain
+	// using ServerCertFile/ServerKeyFile (rotated by cert-manager). The files
+	// are mounted from Kubernetes Secrets.
+	TLSServerCertFile string
+	TLSServerKeyFile  string
+	TLSTrustRootFile  string
+
+	// IntermediateCAFile + IntermediateKeyFile are the keypair brain uses
+	// to sign collector CSRs (/sign-csr and /bootstrap-cert). They MUST chain
+	// to TrustRootFile, so collectors that are issued a cert under this
+	// intermediate validate against the same trust anchor on subsequent
+	// connections.
+	IntermediateCAFile  string
+	IntermediateKeyFile string
+
+	// Replay-protection window applied to every authenticated request. The
+	// nonce cache TTL is 2×this. Defaults to 5m when unset.
+	ReplayWindow time.Duration
 
 	// LLM provider abstraction. Provider defaults to "anthropic" so an existing
 	// deployment with no new config behaves exactly as before. The resolved key
@@ -76,10 +95,8 @@ type Config struct {
 	EvidenceLogLines int
 }
 
-type CollectorConfig struct {
-	ClusterID string
-	Token     string
-}
+// (CollectorConfig removed — token-based per-cluster credentials are replaced
+// by mTLS in v0.7. Identity now comes from the verified client certificate.)
 
 func Load() (*Config, error) {
 	dedupMin, _ := strconv.Atoi(envOr("DEDUP_WINDOW_MINUTES", "15"))
@@ -162,9 +179,20 @@ func Load() (*Config, error) {
 		llmMaxRetries = 1
 	}
 
+	replayWindow, err := time.ParseDuration(envOr("AUTH_REPLAY_WINDOW", "5m"))
+	if err != nil {
+		replayWindow = 5 * time.Minute
+	}
+
 	cfg := &Config{
 		Port:                     envOr("PORT", "8080"),
 		LogLevel:                 envOr("LOG_LEVEL", "info"),
+		TLSServerCertFile:        os.Getenv("TLS_SERVER_CERT_FILE"),
+		TLSServerKeyFile:         os.Getenv("TLS_SERVER_KEY_FILE"),
+		TLSTrustRootFile:         os.Getenv("TLS_TRUST_ROOT_FILE"),
+		IntermediateCAFile:       os.Getenv("INTERMEDIATE_CA_FILE"),
+		IntermediateKeyFile:      os.Getenv("INTERMEDIATE_KEY_FILE"),
+		ReplayWindow:             replayWindow,
 		LLMProvider:              llmProvider,
 		LLMModel:                 llmModel,
 		LLMBaseURL:               os.Getenv("LLM_BASE_URL"),
@@ -205,34 +233,6 @@ func Load() (*Config, error) {
 		EvidenceLogLines:       evidenceLogLines,
 	}
 
-	// Load collector tokens from COLLECTOR_TOKENS env (format: "clusterId:token,clusterId:token")
-	if tokensEnv := os.Getenv("COLLECTOR_TOKENS"); tokensEnv != "" {
-		for _, entry := range strings.Split(tokensEnv, ",") {
-			parts := strings.SplitN(strings.TrimSpace(entry), ":", 2)
-			if len(parts) == 2 {
-				cfg.Collectors = append(cfg.Collectors, CollectorConfig{
-					ClusterID: parts[0],
-					Token:     parts[1],
-				})
-			}
-		}
-	}
-
-	// Also load from individual env vars (COLLECTOR_TOKEN_<CLUSTER_ID>)
-	for _, env := range os.Environ() {
-		if strings.HasPrefix(env, "COLLECTOR_TOKEN_") {
-			parts := strings.SplitN(env, "=", 2)
-			if len(parts) == 2 {
-				clusterID := strings.ToLower(strings.TrimPrefix(parts[0], "COLLECTOR_TOKEN_"))
-				clusterID = strings.ReplaceAll(clusterID, "_", "-")
-				cfg.Collectors = append(cfg.Collectors, CollectorConfig{
-					ClusterID: clusterID,
-					Token:     parts[1],
-				})
-			}
-		}
-	}
-
 	// Provider-aware validation. The default Anthropic path still requires a
 	// key; the OpenAI-compatible path requires base_url + model but allows a
 	// missing key (keyless local endpoints such as Ollama).
@@ -252,8 +252,13 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("unknown LLM_PROVIDER %q (want \"anthropic\" or \"openai-compatible\")", cfg.LLMProvider)
 	}
 
-	if len(cfg.Collectors) == 0 {
-		return nil, fmt.Errorf("at least one collector token must be configured")
+	// mTLS is mandatory in v0.7. All five files must be configured; cert-manager
+	// in the brain's namespace mounts them via the chart's Secret references.
+	if cfg.TLSServerCertFile == "" || cfg.TLSServerKeyFile == "" || cfg.TLSTrustRootFile == "" {
+		return nil, fmt.Errorf("TLS_SERVER_CERT_FILE, TLS_SERVER_KEY_FILE and TLS_TRUST_ROOT_FILE are required for mTLS")
+	}
+	if cfg.IntermediateCAFile == "" || cfg.IntermediateKeyFile == "" {
+		return nil, fmt.Errorf("INTERMEDIATE_CA_FILE and INTERMEDIATE_KEY_FILE are required to sign collector CSRs")
 	}
 
 	return cfg, nil
@@ -273,14 +278,6 @@ func resolveAPIKey() (string, error) {
 		return strings.TrimRight(string(data), " \t\r\n"), nil
 	}
 	return os.Getenv("ANTHROPIC_API_KEY"), nil
-}
-
-func (c *Config) CollectorTokenMap() map[string]string {
-	m := make(map[string]string, len(c.Collectors))
-	for _, col := range c.Collectors {
-		m[col.ClusterID] = col.Token
-	}
-	return m
 }
 
 func envOr(key, fallback string) string {

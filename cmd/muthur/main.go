@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap/zapcore"
 
 	"github.com/VojtechPastyrik/muthur/internal/appconfig"
+	"github.com/VojtechPastyrik/muthur/internal/auth"
 	"github.com/VojtechPastyrik/muthur/internal/config"
 	"github.com/VojtechPastyrik/muthur/internal/dedup"
 	"github.com/VojtechPastyrik/muthur/internal/embed"
@@ -170,13 +171,36 @@ func run() error {
 		)
 	}
 
+	// mTLS plumbing. The server config does double duty: it terminates client
+	// TLS (verifying collector certs against the vendor trust root) and
+	// presents brain's own server cert (hot-reloaded by cert-manager).
+	tlsCfg, err := auth.LoadServerTLS(auth.ServerTLSConfig{
+		CertFile:      cfg.TLSServerCertFile,
+		KeyFile:       cfg.TLSServerKeyFile,
+		TrustRootFile: cfg.TLSTrustRootFile,
+	})
+	if err != nil {
+		return fmt.Errorf("load server TLS: %w", err)
+	}
+
+	// Replay guard backed by the shared store, so nonce uniqueness holds
+	// across replicas when a Redis/Dragonfly backend is configured.
+	replayGuard := auth.NewReplayGuard(st, cfg.ReplayWindow, cfg.RedisPrefix)
+
 	// HTTP server
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RealIP)
 
-	handler := ingest.NewHandler(cfg.CollectorTokenMap(), pipe, logger)
-	r.Post("/ingest", handler.ServeHTTP)
+	handler := ingest.NewHandler(replayGuard, pipe, logger)
+
+	// Routes requiring an authenticated client identity (mTLS-verified) are
+	// scoped to this group. /bootstrap-cert and the public-facing endpoints
+	// stay outside so a brand-new collector (no cert yet) can enrol.
+	r.Group(func(r chi.Router) {
+		r.Use(auth.Middleware(logger))
+		r.Post("/ingest", handler.ServeHTTP)
+	})
 
 	// Operator feedback callback (GET /feedback?id=..&verdict=useful|wrong).
 	r.Get("/feedback", fb.ServeHTTP)
@@ -190,14 +214,15 @@ func run() error {
 	})
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
-	srv := &http.Server{Addr: addr, Handler: r}
+	srv := &http.Server{Addr: addr, Handler: r, TLSConfig: tlsCfg}
 
 	// Listen in the background so the main goroutine can wait for a shutdown
-	// signal and drain in-flight work.
+	// signal and drain in-flight work. Cert + key files are sourced through
+	// tlsCfg.GetCertificate, so the strings here can be empty.
 	serveErr := make(chan error, 1)
 	go func() {
-		logger.Info("starting muthur", zap.String("addr", addr))
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		logger.Info("starting muthur (mTLS)", zap.String("addr", addr))
+		if err := srv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
 			serveErr <- err
 		}
 	}()

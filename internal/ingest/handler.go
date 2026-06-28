@@ -1,7 +1,7 @@
 package ingest
 
 import (
-	"crypto/subtle"
+	"errors"
 	"io"
 	"net/http"
 	"sync"
@@ -9,11 +9,20 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/VojtechPastyrik/muthur/internal/auth"
 	pb "github.com/VojtechPastyrik/muthur/proto"
 )
 
+// Handler accepts collector-pushed alert payloads. Authentication is performed
+// by the upstream auth middleware (mTLS) — Handler trusts that an Identity is
+// present in the request context. It then enforces:
+//
+//  1. Replay protection: timestamp window + single-use nonce (auth.ReplayGuard).
+//  2. Identity binding: the payload's self-declared cluster_id must equal the
+//     cluster_id authenticated from the client certificate. A collector with
+//     a cert for cluster A cannot ship data labelled as cluster B.
 type Handler struct {
-	tokenMap  map[string]string
+	replay    *auth.ReplayGuard
 	processor Processor
 	logger    *zap.Logger
 	wg        sync.WaitGroup
@@ -27,9 +36,9 @@ type Processor interface {
 	Process(payload *pb.AlertPayload)
 }
 
-func NewHandler(tokenMap map[string]string, processor Processor, logger *zap.Logger) *Handler {
+func NewHandler(replay *auth.ReplayGuard, processor Processor, logger *zap.Logger) *Handler {
 	return &Handler{
-		tokenMap:  tokenMap,
+		replay:    replay,
 		processor: processor,
 		logger:    logger,
 	}
@@ -41,9 +50,33 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token := r.Header.Get("X-Collector-Token")
-	if token == "" {
+	// Identity is set by auth.Middleware. Its absence here means the route
+	// was mounted without that middleware — a wiring bug we want to fail
+	// closed on.
+	id, ok := auth.FromContext(r.Context())
+	if !ok {
+		h.logger.Warn("ingest reached without identity — middleware not mounted?")
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if err := h.replay.Verify(r.Context(), id, r); err != nil {
+		// Map replay errors to status codes. Missing/malformed headers are
+		// client bugs (400); reused nonce or stale timestamp is treated as
+		// 401 because it's how a replayed-by-attacker request looks.
+		status := http.StatusUnauthorized
+		switch {
+		case errors.Is(err, auth.ErrReplayMissingTimestamp),
+			errors.Is(err, auth.ErrReplayBadTimestamp),
+			errors.Is(err, auth.ErrReplayMissingNonce),
+			errors.Is(err, auth.ErrReplayBadNonce):
+			status = http.StatusBadRequest
+		}
+		h.logger.Warn("replay check failed",
+			zap.Error(err),
+			zap.String("identity", id.String()),
+		)
+		http.Error(w, http.StatusText(status), status)
 		return
 	}
 
@@ -61,16 +94,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	expectedToken, ok := h.tokenMap[payload.ClusterId]
-	if !ok {
-		h.logger.Warn("unknown cluster", zap.String("cluster_id", payload.ClusterId))
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	// Constant-time compare to avoid leaking the token via response timing.
-	if subtle.ConstantTimeCompare([]byte(expectedToken), []byte(token)) != 1 {
-		h.logger.Warn("token mismatch", zap.String("cluster_id", payload.ClusterId))
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	// Cross-check the payload's self-declared cluster_id against the
+	// authenticated identity. This is the load-bearing isolation between
+	// tenants: a compromised or malicious collector cannot ship data labelled
+	// as a different cluster.
+	if payload.ClusterId != id.ClusterID {
+		h.logger.Warn("payload cluster_id does not match cert identity",
+			zap.String("payload_cluster_id", payload.ClusterId),
+			zap.String("cert_cluster_id", id.ClusterID),
+		)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
