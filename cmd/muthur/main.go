@@ -204,6 +204,7 @@ func run() error {
 	logger.Info("tenants loaded", zap.Int("count", len(fileCfg.Tenants)))
 
 	bootstrap := auth.NewBootstrapHandler(tenants, signer, st, cfg.RedisPrefix, logger)
+	renew := auth.NewRenewHandler(tenants, signer, replayGuard, logger)
 
 	// HTTP server
 	r := chi.NewRouter()
@@ -218,6 +219,7 @@ func run() error {
 	r.Group(func(r chi.Router) {
 		r.Use(auth.Middleware(logger))
 		r.Post("/ingest", handler.ServeHTTP)
+		r.Post("/sign-csr", renew.ServeHTTP)
 	})
 
 	// /bootstrap-cert intentionally has no auth middleware: the bootstrap
