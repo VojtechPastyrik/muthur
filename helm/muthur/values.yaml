@@ -204,6 +204,13 @@ config:
     #            external retention sink (Loki + object lock, SIEM with WORM);
     #            otherwise k8s container log rotation (10MB×5) eats it.
     auditMode: "off"
+    # Refuse to start with a cloud-managed LLM provider. When true,
+    # the "anthropic" provider is rejected at boot and the operator
+    # must use "openai-compatible" pointed at an in-cluster endpoint
+    # (Ollama / vLLM / LM Studio). Designed for regulated deployments
+    # where any cloud egress is a compliance violation; pair with a
+    # NetworkPolicy / egress filter for the kernel-level guarantee.
+    airGapped: false
     # Secret key holding the LLM API key. Mounted as a FILE at
     # /secrets/llm/api-key (never a plain env var). Kept as ANTHROPIC_API_KEY so
     # existing Secret/ExternalSecret data is unchanged; the slot is provider-

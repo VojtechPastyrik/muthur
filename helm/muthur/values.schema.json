@@ -149,7 +149,8 @@
         "llm": {
           "type": "object",
           "properties": {
-            "auditMode": { "type": "string", "enum": ["off", "hash", "full"] }
+            "auditMode": { "type": "string", "enum": ["off", "hash", "full"] },
+            "airGapped": { "type": "boolean" }
           }
         }
       }

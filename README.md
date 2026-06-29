@@ -162,6 +162,7 @@ Beyond the existing settings, the new features add:
 | `LLM_BURST` | `15` | Cost backstop: max instantaneous burst of LLM calls |
 | `LLM_MAX_CONCURRENT` | `8` | Cost backstop: max in-flight LLM calls (0 disables) |
 | `LLM_AUDIT_MODE` | `off` | Per-call audit log of LLM input/output: `off` (default, no audit), `hash` (identity + SHA-256 of system/user prompt + output, no bodies), `full` (identity + hashes + full bodies). Pick `full` only with an external retention sink — k8s container log rotation (default 10MB×5) eats the audit during a storm. |
+| `LLM_AIR_GAPPED` | `false` | Refuse to start with a cloud-managed LLM provider. When `true`, the `anthropic` provider is rejected at boot; operators must use `openai-compatible` with `LLM_BASE_URL` pointed at an in-cluster Ollama / vLLM / LM Studio. Pair with NetworkPolicy / egress filtering for a kernel-level guarantee. |
 | `ALERTMANAGER_SILENCE_ALLOWLIST` | _(empty)_ | Comma-separated alertnames eligible for auto-silence; empty = no restriction. Critical alerts are never silenced |
 | `REDIS_URL` | _(empty)_ | Redis/Dragonfly connection string; empty → in-memory store |
 | `REDIS_PREFIX` | `muthur:` | Key namespace prefix |

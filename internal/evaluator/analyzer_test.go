@@ -171,3 +171,29 @@ func TestNew_UnknownProvider(t *testing.T) {
 		t.Error("want error for unknown provider")
 	}
 }
+
+// TestNew_AirGappedRefusesCloudProvider asserts the air-gapped flag
+// fails fast at startup when paired with a cloud-managed provider.
+// Regulated deployments rely on this to surface a misconfiguration
+// before any payload reaches the cloud LLM endpoint.
+func TestNew_AirGappedRefusesAnthropic(t *testing.T) {
+	if _, err := New(Config{Provider: "anthropic", APIKey: "sk-test", AirGapped: true}, zap.NewNop()); err == nil {
+		t.Error("want error when air-gapped mode is paired with the anthropic provider")
+	}
+}
+
+// TestNew_AirGappedAllowsOpenAICompatible — the openai-compatible path
+// is permitted because the operator can point LLM_BASE_URL at an
+// in-cluster endpoint (Ollama / vLLM). The flag does not validate the
+// URL; that is the operator's NetworkPolicy / egress filter to enforce.
+func TestNew_AirGappedAllowsOpenAICompatible(t *testing.T) {
+	_, err := New(Config{
+		Provider:  "openai-compatible",
+		Model:     "qwen2.5",
+		BaseURL:   "http://ollama.ai.svc.cluster.local:11434/v1",
+		AirGapped: true,
+	}, zap.NewNop())
+	if err != nil {
+		t.Errorf("openai-compatible must be allowed under air-gapped mode: %v", err)
+	}
+}

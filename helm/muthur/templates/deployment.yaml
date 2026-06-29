@@ -92,6 +92,8 @@ spec:
               value: {{ .Values.config.llm.maxRetries | quote }}
             - name: LLM_AUDIT_MODE
               value: {{ .Values.config.llm.auditMode | quote }}
+            - name: LLM_AIR_GAPPED
+              value: {{ .Values.config.llm.airGapped | quote }}
             {{- if .Values.config.llm.apiKeySecretKey }}
             # API key is mounted as a FILE (never a plain env var). The Secret
             # key below is surfaced at /secrets/llm/api-key.

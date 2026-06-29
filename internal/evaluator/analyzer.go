@@ -118,6 +118,15 @@ type Config struct {
 	//            object-lock storage) is in place; otherwise k8s ring buffer
 	//            rotates the audit away within minutes during a storm.
 	AuditMode string
+	// AirGapped, when true, refuses any LLM provider that talks to a
+	// cloud-managed inference endpoint. Today that means the native
+	// "anthropic" provider is rejected; "openai-compatible" is accepted
+	// (the operator is responsible for pointing LLM_BASE_URL at an
+	// in-cluster Ollama / vLLM / LM Studio, not at api.openai.com).
+	// Designed for regulated deployments where any cloud egress is a
+	// compliance violation; pairs well with NetworkPolicy / egress
+	// filtering to enforce the same invariant at the kernel level.
+	AirGapped bool
 }
 
 // AuditMode controls how the LLM input/output audit log is emitted.
@@ -163,6 +172,9 @@ func New(cfg Config, logger *zap.Logger) (*Evaluator, error) {
 	var p provider
 	switch cfg.Provider {
 	case "", "anthropic":
+		if cfg.AirGapped {
+			return nil, errors.New("air-gapped mode forbids the cloud-managed anthropic provider; set LLM_PROVIDER=openai-compatible and point LLM_BASE_URL at an in-cluster endpoint")
+		}
 		model := cfg.Model
 		if model == "" {
 			model = defaultAnthropicModel

@@ -8,6 +8,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`LLM_AIR_GAPPED` flag.** When `true`, the brain refuses to start
+  with a cloud-managed LLM provider (today: `anthropic`). Operators
+  in regulated deployments now get a fail-fast at boot instead of a
+  silent cloud-egress leak if the provider config drifts. The flag
+  is not a substitute for a NetworkPolicy / egress filter — those
+  enforce the same invariant at the kernel level — but it pairs with
+  them so a misconfig fails closed at both layers.
 - **Grafana dashboard JSON** at `helm/muthur/grafana/dashboard.json`.
   Templated by the `cluster_id` label (so a multi-tenant deployment is
   one dashboard, not N), covers alert flow, LLM cost + latency + reliability,

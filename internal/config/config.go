@@ -73,6 +73,10 @@ type Config struct {
 	//            otherwise k8s container log rotation (10MB×5) eats the
 	//            audit during a storm.
 	LLMAuditMode string
+	// LLMAirGapped, when true, refuses to start with a cloud LLM provider
+	// (today: anthropic). Pairs with NetworkPolicy / egress filtering to
+	// enforce the no-cloud-egress invariant for regulated deployments.
+	LLMAirGapped bool
 
 	// Cost backstop: hard ceilings on LLM calls regardless of cache/dedup/
 	// correlation. A storm of distinct, uncacheable alerts degrades to raw
@@ -234,6 +238,7 @@ func Load() (*Config, error) {
 		LLMTemperature:           llmTemperature,
 		LLMMaxRetries:            llmMaxRetries,
 		LLMAuditMode:             strings.ToLower(envOr("LLM_AUDIT_MODE", "off")),
+		LLMAirGapped:             boolEnv("LLM_AIR_GAPPED", false),
 		LLMTimeout:               llmTimeout,
 		LLMMaxCallsPerMinute:     llmMaxPerMin,
 		LLMBurst:                 llmBurst,
@@ -319,4 +324,18 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// boolEnv reads an env var as a bool, returning fallback on unset or
+// unparseable values. Accepts the strconv.ParseBool set: "1"/"t"/"true"/...
+func boolEnv(key string, fallback bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return fallback
+	}
+	return b
 }

@@ -103,6 +103,7 @@ func run() error {
 		MaxRetries:  cfg.LLMMaxRetries,
 		Timeout:     cfg.LLMTimeout,
 		AuditMode:   cfg.LLMAuditMode,
+		AirGapped:   cfg.LLMAirGapped,
 	}, logger)
 	if err != nil {
 		return fmt.Errorf("init evaluator: %w", err)
