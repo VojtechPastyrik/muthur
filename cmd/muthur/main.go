@@ -114,7 +114,7 @@ func run() error {
 
 	// Cost backstop: hard rate + concurrency ceiling on LLM calls. Nil when
 	// disabled (limits non-positive), in which case the pipeline is unlimited.
-	limiter := llmlimit.New(cfg.LLMMaxCallsPerMinute, cfg.LLMBurst, cfg.LLMMaxConcurrent, logger)
+	limiter := llmlimit.NewPool(cfg.LLMMaxCallsPerMinute, cfg.LLMBurst, cfg.LLMMaxConcurrent, logger)
 	if limiter != nil {
 		logger.Info("LLM cost backstop enabled",
 			zap.Int("calls_per_minute", cfg.LLMMaxCallsPerMinute),

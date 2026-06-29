@@ -31,59 +31,67 @@ var (
 		Help: "LLM analysis cache lookups by result.",
 	}, []string{"result"})
 
-	// LLMCalls counts LLM evaluations by result (ok, error) and by the backend
-	// that served them (provider, model), so cost and reliability can be broken
-	// down per provider when more than one is in play.
+	// LLM-related metrics carry a cluster_id label so cost, reliability, and
+	// validation behaviour can be attributed to the tenant whose alert
+	// triggered the call. Cardinality is bounded by the tenants list, which
+	// is small (handful per vendor); high-cardinality concerns from "label
+	// every payload" do not apply.
+	//
+	// LLMCalls counts LLM evaluations by result (ok, error), provider,
+	// model, and the originating cluster_id.
 	LLMCalls = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "muthur_llm_calls_total",
-		Help: "LLM evaluations by result, provider, and model.",
-	}, []string{"result", "provider", "model"})
+		Help: "LLM evaluations by result, provider, model, and cluster_id.",
+	}, []string{"result", "provider", "model", "cluster_id"})
 
-	// LLMCallDuration tracks end-to-end LLM evaluation latency, labelled by the
-	// serving provider and model.
+	// LLMCallDuration tracks end-to-end LLM evaluation latency, labelled by
+	// the serving provider, model, and originating cluster_id.
 	LLMCallDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "muthur_llm_call_duration_seconds",
-		Help:    "LLM evaluation latency including retries, by provider and model.",
+		Help:    "LLM evaluation latency including retries, by provider, model, and cluster_id.",
 		Buckets: []float64{0.5, 1, 2, 5, 10, 20, 30, 60},
-	}, []string{"provider", "model"})
+	}, []string{"provider", "model", "cluster_id"})
 
-	// LLMTokens counts LLM token usage by direction (input, output), provider,
-	// and model.
+	// LLMTokens counts LLM token usage by direction (input, output),
+	// provider, model, and cluster_id. The cluster_id label is what makes
+	// per-tenant cost billing possible.
 	LLMTokens = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "muthur_llm_tokens_total",
-		Help: "LLM token usage by direction, provider, and model.",
-	}, []string{"direction", "provider", "model"})
+		Help: "LLM token usage by direction, provider, model, and cluster_id.",
+	}, []string{"direction", "provider", "model", "cluster_id"})
 
 	// LLMValidationFailures counts LLM outputs that failed canonical-schema
-	// validation, by provider and model. A non-zero rate means a model is
-	// struggling to honour the structured-output contract.
+	// validation, by provider, model, and cluster_id. A non-zero rate means
+	// a model is struggling to honour the structured-output contract — split
+	// by cluster_id surfaces whether one tenant's payloads are unusually
+	// pathological.
 	LLMValidationFailures = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "muthur_llm_validation_failures_total",
-		Help: "LLM outputs that failed canonical-schema validation, by provider and model.",
-	}, []string{"provider", "model"})
+		Help: "LLM outputs that failed canonical-schema validation, by provider, model, and cluster_id.",
+	}, []string{"provider", "model", "cluster_id"})
 
 	// LLMRetries counts corrective retries issued after a validation failure,
-	// by provider and model.
+	// by provider, model, and cluster_id.
 	LLMRetries = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "muthur_llm_retries_total",
-		Help: "Corrective structured-output retries, by provider and model.",
-	}, []string{"provider", "model"})
+		Help: "Corrective structured-output retries, by provider, model, and cluster_id.",
+	}, []string{"provider", "model", "cluster_id"})
 
-	// LLMDegraded counts evaluations that exhausted their corrective retries and
-	// degraded to raw delivery, by provider and model. This is the honest
-	// fallback — never a silent markdown/JSON parse.
+	// LLMDegraded counts evaluations that exhausted their corrective retries
+	// and degraded to raw delivery, by provider, model, and cluster_id. This
+	// is the honest fallback — never a silent markdown/JSON parse.
 	LLMDegraded = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "muthur_llm_degraded_total",
-		Help: "Evaluations degraded to raw delivery after structured-output retries, by provider and model.",
-	}, []string{"provider", "model"})
+		Help: "Evaluations degraded to raw delivery after structured-output retries, by provider, model, and cluster_id.",
+	}, []string{"provider", "model", "cluster_id"})
 
 	// LLMThrottled counts LLM evaluations skipped by the cost backstop, by
-	// reason: rate (calls-per-minute ceiling) or concurrency (in-flight cap).
-	// A throttled alert is still delivered, just without Claude enrichment.
+	// reason (rate or concurrency) and cluster_id. A throttled alert is still
+	// delivered, just without Claude enrichment.
 	LLMThrottled = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "muthur_llm_throttled_total",
-		Help: "LLM evaluations skipped by the rate/concurrency backstop, by reason.",
-	}, []string{"reason"})
+		Help: "LLM evaluations skipped by the rate/concurrency backstop, by reason and cluster_id.",
+	}, []string{"reason", "cluster_id"})
 
 	// Silences counts AlertManager silence outcomes by result: created, blocked
 	// (refused by a guard), error.

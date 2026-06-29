@@ -32,7 +32,7 @@ type Pipeline struct {
 	dedup      *dedup.Deduplicator
 	evaluator  evaluator.Analyzer
 	cache      *llmcache.Cache
-	limiter    *llmlimit.Limiter
+	limiter    *llmlimit.Pool
 	router     *routing.Router
 	notifiers  map[string]notify.Notifier
 	silence    *silence.Client
@@ -47,7 +47,7 @@ func New(
 	dd *dedup.Deduplicator,
 	eval evaluator.Analyzer,
 	cache *llmcache.Cache,
-	limiter *llmlimit.Limiter,
+	limiter *llmlimit.Pool,
 	router *routing.Router,
 	notifiers map[string]notify.Notifier,
 	silence *silence.Client,
@@ -182,13 +182,14 @@ func (p *Pipeline) evaluate(ctx context.Context, payload *pb.AlertPayload) *eval
 	}
 	// Cost backstop: under a storm of uncacheable alerts, skip the LLM and
 	// deliver the raw alert rather than run up an unbounded bill.
-	if !p.limiter.Acquire() {
+	if !p.limiter.Acquire(payload.ClusterId) {
 		p.logger.Warn("LLM cost backstop hit, delivering raw alert",
 			zap.String("alert", payload.AlertName),
+			zap.String("cluster_id", payload.ClusterId),
 		)
 		return nil
 	}
-	defer p.limiter.Release()
+	defer p.limiter.Release(payload.ClusterId)
 	examples := p.feedback.Examples(ctx, payload)
 	analysis, err := p.evaluator.Evaluate(ctx, payload, examples)
 	if err != nil {
@@ -205,14 +206,14 @@ func (p *Pipeline) evaluate(ctx context.Context, payload *pb.AlertPayload) *eval
 // evaluateIncident asks Claude for one unified analysis across the group.
 // Incidents are not cached — each correlated group is unique.
 func (p *Pipeline) evaluateIncident(ctx context.Context, rep *pb.AlertPayload, alerts []*pb.AlertPayload) *evaluator.Analysis {
-	if !p.limiter.Acquire() {
+	if !p.limiter.Acquire(rep.ClusterId) {
 		p.logger.Warn("LLM cost backstop hit, delivering raw incident",
 			zap.String("cluster_id", rep.ClusterId),
 			zap.Int("alerts", len(alerts)),
 		)
 		return nil
 	}
-	defer p.limiter.Release()
+	defer p.limiter.Release(rep.ClusterId)
 	examples := p.feedback.Examples(ctx, rep)
 	analysis, err := p.evaluator.EvaluateIncident(ctx, alerts, examples)
 	if err != nil {
@@ -228,6 +229,22 @@ func (p *Pipeline) evaluateIncident(ctx context.Context, rep *pb.AlertPayload, a
 
 func (p *Pipeline) maybeSilence(ctx context.Context, payload *pb.AlertPayload, analysis *evaluator.Analysis) {
 	if analysis == nil || !analysis.Silence {
+		return
+	}
+	// Auto-tier on low confidence: the model itself flagged that its verdict
+	// is a guess, not a data-grounded conclusion. Refusing the silence keeps
+	// the page on call so a human can verify; the notification still carries
+	// the LLM analysis with `confidence: low` so on-call sees the model's
+	// reasoning as advisory rather than authoritative. The
+	// `low_confidence` result joins the existing `blocked` outcomes
+	// (critical severity, allowlist miss) in the silences metric so an
+	// operator can spot a model that's chronically uncertain.
+	if analysis.Confidence == "low" {
+		metrics.Silences.WithLabelValues("low_confidence").Inc()
+		p.logger.Info("auto-silence refused: analysis confidence is low",
+			zap.String("alert", payload.AlertName),
+			zap.String("cluster_id", payload.ClusterId),
+		)
 		return
 	}
 	if err := p.silence.CreateSilence(ctx, payload, analysis.SilenceReason); err != nil {

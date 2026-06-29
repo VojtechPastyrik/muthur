@@ -9,9 +9,29 @@ North star: thin, privacy-first AI brain for vendors managing client clusters.
 
 ---
 
-## Findings from EPIC 0 mapping (2026-06-28)
+## Findings from EPIC 0 mapping (2026-06-28, partial rewrite 2026-06-29)
 
-Key surprises after reading both repos:
+The original mapping is preserved below for history; the post-v0.8.4
+state is summarised here so a new reader doesn't infer a stale picture.
+
+**Shipped since the original mapping (v0.7-v0.8.4):**
+- Wire format moved from REST to gRPC (`monitoring.v1.Brain`).
+- Bearer-token auth replaced with mTLS + vendor CA, hot-reloaded
+  revocation, replay protection via timestamp + nonce.
+- Per-tenant cost backstop, per-tenant metric labels, LLM audit log,
+  auto-tier on low confidence, structural anti-prompt-injection
+  (system/user role split), redaction extended beyond log lines.
+
+**Still open (highest signal):**
+- Per-tenant Redis prefix (multi-tenant safety).
+- Proto duplication (mechanical drift risk).
+- `air_gapped` mode flag.
+- Grafana dashboard JSON checked into the repo.
+- ARCHITECTURE.md promotion.
+
+---
+
+Original findings (history, 2026-06-28):
 
 1. **"Signed protobuf" in original plan DOES NOT exist.** Wire format is plain protobuf, auth is bearer token (`X-Collector-Token` header). No HMAC, no signature, no replay protection. Update Tier 1 plans accordingly.
 2. **Zero TLS / mTLS anywhere.** No `crypto/tls` usage in either repo. Forwarder uses default `http.Client`. EPIC 2 is fully greenfield.
@@ -47,28 +67,43 @@ Everything else is deferred until Tier 1 ships. Resist scope creep.
 - ✅ LLM loop documented (provider abstraction at `internal/evaluator/`, validate-retry-degrade in `analyzer.go:169-221`)
 - ✅ Redaction documented (`internal/redact/redactor.go`, fail-closed, size guards mandatory)
 
-## EPIC 1 — Transport: collector-initiated bidi gRPC stream — ❌
-- ❌ Replace POST `/ingest` with bidirectional gRPC stream (collector dial → brain)
-- ❌ Long-poll fallback for environments blocking gRPC
-- ❌ Backpressure + auto-reconnect after disconnect
+## EPIC 1 — Transport: collector → brain gRPC — ✅ shipped v0.8.0
+- ✅ Replace POST `/ingest` (and `/bootstrap-cert`, `/sign-csr`) with the
+  `monitoring.v1.Brain` gRPC service. Collector dials brain (still
+  unary, not streaming — see EPIC 3 for the streaming case)
+- 🚫 Long-poll fallback — dropped; gRPC over TLS clears the same
+  middleboxes that REST did
+- 🚫 Backpressure + auto-reconnect on streams — not needed until
+  streaming is added (EPIC 3)
 - ✅ No new inbound port on collector (already outbound-only)
-- ❌ Unify proto into a single source of truth (currently duplicated in both repos) — do BEFORE this epic
-- ❌ `make proto` + tests for the new stream
+- 🟡 Unify proto into a single source of truth — currently duplicated
+  in `muthur/proto/` and `muthur-collector/proto/`; CI does not yet
+  cross-check
+- ✅ `make proto` + tests for the gRPC surface
 
-## EPIC 2 — Auth (mTLS + CA + per-tenant) — ❌ greenfield
-- ❌ **Replace `X-Collector-Token` bearer token with mTLS + vendor CA**
-- ❌ Root CA offline, intermediate file-mount on brain
-- ❌ Brain trusts a single root (vendor), verifies offline
-- ❌ Identity from cert (SAN/CN), never from payload
-- ❌ cert-manager in client cluster: local key generation
-- ❌ CSR signing via vendor intermediate (root never leaves vendor)
-- ❌ Auto rotation (`duration` + `renewBefore`)
-- ❌ Revocation by drop from brain trust (no client-side intervention)
-- ❌ Per-tenant rate limit + concurrency (today: global `llmlimit`, no per-cluster bucket)
-- 🟡 Authz: `identity.cluster_id == payload.cluster_id`, else 403 (today: token-cluster mapping exists, needs cert-based replacement)
-- ❌ Replay protection: timestamp + nonce + cache (today: none — relying on TLS at the ingress)
-- ❌ Per-tenant Redis prefix (today: shared `muthur:` prefix → cross-tenant data lives in same namespace)
-- ❌ Migration: dual-accept (token+mTLS) for N versions, then drop
+## EPIC 2 — Auth (mTLS + CA + per-tenant) — ✅ shipped v0.7-v0.8.3
+- ✅ Replaced `X-Collector-Token` with mTLS + vendor CA (v0.7.0)
+- ✅ Root CA offline, intermediate file-mounted on brain; chart
+  auto-provisions root + intermediate via cert-manager when
+  `ca.enabled: true`
+- ✅ Brain trusts a single root (vendor), verifies offline
+- ✅ Identity from cert (SPIFFE URI SAN or CN), never from payload
+- ✅ cert-manager in client cluster: collector init container generates
+  the key locally and CSRs out
+- ✅ CSR signing via vendor intermediate (root never leaves vendor)
+- ✅ Auto rotation (`certDuration` per tenant; renewCron on collector)
+- ✅ Runtime revocation: `revoked: true` flag-flip propagates within
+  ~5s via the tenants config hot-reload (v0.8.2-v0.8.3)
+- ✅ Per-tenant rate limit + concurrency (v0.8.4 — `llmlimit.Pool`
+  buckets per `cluster_id`)
+- ✅ Authz: `identity.cluster_id == payload.cluster_id` enforced at
+  ingest, else `PermissionDenied`
+- ✅ Replay protection: `x-muthur-timestamp` + single-use `x-muthur-nonce`
+  via `auth.ReplayGuard` (v0.8.0)
+- ❌ Per-tenant Redis prefix (today: shared `muthur:` prefix → cross-
+  tenant data lives in same namespace; tech-debt entry below)
+- 🚫 Migration: dual-accept (token+mTLS) — dropped; deployed as a hard
+  cut at v0.7.0
 
 ## EPIC 3 — Agentic pull — ❌
 - ❌ LLM loop: model can request more logs/metrics mid-analysis
@@ -100,37 +135,67 @@ Everything else is deferred until Tier 1 ships. Resist scope creep.
 - ~~Schedule (on-call rota)~~
 
 ## EPIC 7 — Privacy / data sovereignty (sales argument) — 🟡
-- ❌ **Local embedder** (no cloud embedding calls)
-- 🟡 **Local LLM** first-class (provider abstraction supports OpenAI-compatible → Ollama/vLLM work today; need: prompt tuning for smaller models, validated examples in docs, recommended models per task)
-- ❌ **"Air-gapped mode"** flag — no egress except brain (refuse to start with cloud LLM provider config when set)
+- ✅ **Local embedder** (`internal/embed/embed.go` — in-process; no
+  cloud embedding calls)
+- 🟡 **Local LLM** first-class (provider abstraction supports
+  OpenAI-compatible → Ollama/vLLM/LM Studio/Groq/Together/OpenRouter
+  work today; still missing: prompt tuning for smaller models,
+  validated examples in docs, recommended models per task)
+- ❌ **"Air-gapped mode"** flag — no egress except brain (refuse to
+  start with cloud LLM provider config when set)
 - 🟡 **Audit / proof report** — what actually left the cluster
-  - ✅ Collector tracks redaction stats (`TotalLogLines`, `RedactedLogLines`, `TotalReplacements` + per-category counts when `REDACT_LOG_STATS=true`)
-  - ❌ Brain surfaces it (today it's opaque in payload, never logged or shown in notifications)
-  - ❌ Per-tenant exportable audit log
-- 🟡 **Configurable PII obfuscation** — exists for credentials/PII/PCI/network patterns, supports `REDACT_EXTRA_PATTERNS` custom regex. Missing: field-level masks for structured payload (labels, annotations)
+  - ✅ Collector tracks redaction stats (`TotalLogLines`,
+    `RedactedLogLines`, `TotalReplacements` + per-category counts when
+    `REDACT_LOG_STATS=true`)
+  - ✅ Brain LLM audit log (v0.8.2 — `LLM_AUDIT_MODE=off|hash|full`;
+    identity + prompt/output hashes + optional bodies)
+  - ❌ Per-tenant exportable audit log endpoint (the data is in the
+    structured log; surfacing a per-tenant JSONL export is still TODO)
+- ✅ **Configurable PII obfuscation across every leaving field**
+  (v0.8.1 — annotations, label names + values, metric descriptions
+  share the log redactor's pattern set; v0.8.2 adds
+  `REDACT_MAX_STRING_BYTES` knob with a fail-closed marker)
 
 ## EPIC 8 — MUTHUR observability — 🟡
-- 🟡 Prometheus metrics (✅ exist: `LLMTokens`, `LLMRetries`, `LLMDegraded`, `LLMValidationFailures`, redaction stats — ❌ not per-tenant labeled)
+- ✅ Prometheus metrics with per-tenant `cluster_id` label (v0.8.4 —
+  `LLMCalls`, `LLMTokens`, `LLMCallDuration`, `LLMValidationFailures`,
+  `LLMRetries`, `LLMDegraded`, `LLMThrottled` all carry `cluster_id`)
 - ❌ Ship Grafana dashboard (JSON in repo, no custom UI)
 - ❌ OpenTelemetry traces brain → LLM → notifier
-- 🟡 Cost report (LLM tokens, $) per tenant (✅ token counter exists; ❌ no $ math, no per-tenant labels)
-- ✅ "Incident recurrence" (exists via deterministic alertkey + `IncidentHistory` store)
+- 🟡 Cost report ($) per tenant — token counters carry `cluster_id`
+  so a Grafana panel can multiply by provider $/token; no $ math
+  shipped in MUTHUR itself
+- ✅ "Incident recurrence" (exists via deterministic alertkey +
+  `IncidentHistory` store)
 
-## EPIC 9 — Trust calibration for LLM output — 🟡 (most plumbing already exists)
-- ✅ **Confidence score per analysis** (`Analysis.Confidence` field exists: "high"/"medium"/"low" — emitted in notifications)
-- 🟡 **"Why this severity" rationale** (`Analysis.Grounding` field exists: "stated"/"inferred"; ❌ no free-text rationale yet)
-- ✅ **Feedback loop: human label "useful/wrong"** (`/feedback?id=&verdict=` endpoint + Redis-backed verdict store, 30d TTL)
-- ✅ **Prompt tuning via few-shot replay** (recent verdicts replayed as `Example`s in next prompt)
-- ❌ **Auto-tier:** low confidence → ship raw + LLM summary (today: degrade only happens on hard validation failure, not on low confidence)
-- 🟡 **Cost backstop:** hard limit $ per incident, per hour, per tenant (today: global `llmlimit` token bucket; ❌ no per-tenant, no $/incident hard cap)
+## EPIC 9 — Trust calibration for LLM output — 🟡
+- ✅ **Confidence score per analysis** (`Analysis.Confidence`:
+  high/medium/low; surfaced in every notifier's `ConfidenceLine`)
+- 🟡 **"Why this severity" rationale** (`Analysis.Grounding`:
+  stated/inferred — boolean-ish signal, not yet a free-text rationale)
+- ✅ **Feedback loop: human label "useful/wrong"** (`/feedback?id=&verdict=`
+  endpoint + Redis-backed verdict store, 30d TTL)
+- ✅ **Prompt tuning via few-shot replay** (recent verdicts replayed as
+  `Example`s in next prompt)
+- ✅ **Auto-tier on low confidence** (v0.8.4 — `confidence: low`
+  refuses auto-silence and emits
+  `muthur_silences_total{result="low_confidence"}` so a chronically
+  uncertain model is visible)
+- ✅ **Per-tenant cost backstop** (v0.8.4 — `llmlimit.Pool` gives every
+  `cluster_id` its own rate + concurrency bucket so one noisy tenant
+  cannot drain the budget for others). ❌ Still no $/incident hard cap
+  (cost-per-call modelling left to the operator's Grafana panel using
+  the per-tenant `LLMTokens` counter)
 
 ## EPIC 10 — Notifier channels (expansion)
 - ❌ MS Teams
 - ❌ Mattermost
 - ❌ OpsGenie
-- ❌ Webhook (generic, signed)
+- ✅ Generic webhook (`internal/notify/webhook.go` — JSON POST with the
+  full structured payload; HMAC signing still ❌)
 - ❌ Notifier health check (test alert button / endpoint)
-- ✅ Existing notifiers: Slack, Discord, Telegram, PagerDuty, Email/SMTP
+- ✅ Existing notifiers: Slack, Discord, Telegram, PagerDuty, Email/SMTP,
+  Webhook
 
 ## EPIC 11 — Multi-tenant vendor ops
 - 🟡 Per-tenant config (today: per-cluster token mapping, routing rules can match `ClusterID`; ❌ no full per-tenant config object)

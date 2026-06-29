@@ -55,10 +55,14 @@ func New(callsPerMinute, burst, maxConcurrent int, logger *zap.Logger) *Limiter 
 }
 
 // Acquire reserves one rate token and one concurrency slot. It never blocks: if
-// either ceiling is hit it records the reason, releases anything it took, and
-// returns false. On true, the caller MUST call Release exactly once when the LLM
-// call finishes.
-func (l *Limiter) Acquire() bool {
+// either ceiling is hit it records the reason against the calling tenant and
+// returns false. On true, the caller MUST call Release exactly once when the
+// LLM call finishes.
+//
+// clusterID labels the throttle metric so an operator can tell which tenant
+// is consuming the global budget. The limiter itself is still global — see
+// the per-tenant bucket helper for cost-isolation.
+func (l *Limiter) Acquire(clusterID string) bool {
 	if l == nil {
 		return true
 	}
@@ -67,7 +71,7 @@ func (l *Limiter) Acquire() bool {
 	select {
 	case l.concurrency <- struct{}{}:
 	default:
-		metrics.LLMThrottled.WithLabelValues("concurrency").Inc()
+		metrics.LLMThrottled.WithLabelValues("concurrency", clusterID).Inc()
 		return false
 	}
 
@@ -81,7 +85,7 @@ func (l *Limiter) Acquire() bool {
 	if l.tokens < 1 {
 		l.mu.Unlock()
 		<-l.concurrency // give the slot back
-		metrics.LLMThrottled.WithLabelValues("rate").Inc()
+		metrics.LLMThrottled.WithLabelValues("rate", clusterID).Inc()
 		return false
 	}
 	l.tokens--
@@ -89,8 +93,10 @@ func (l *Limiter) Acquire() bool {
 	return true
 }
 
-// Release returns a concurrency slot taken by a successful Acquire.
-func (l *Limiter) Release() {
+// Release returns a concurrency slot taken by a successful Acquire. clusterID
+// is accepted for symmetry with Acquire; on the per-tenant Pool below it picks
+// the right bucket to return the slot to.
+func (l *Limiter) Release(_ string) {
 	if l == nil {
 		return
 	}
@@ -98,4 +104,69 @@ func (l *Limiter) Release() {
 	case <-l.concurrency:
 	default:
 	}
+}
+
+// Pool gives each tenant its own Limiter so a noisy collector cannot drain
+// the global LLM budget for every other tenant. Buckets are lazy-allocated on
+// first Acquire and persist for the lifetime of the process — the tenant set
+// is small (handful per vendor), so map growth is bounded by the configured
+// tenants list, not by attacker-controlled cluster_ids (RevocationInterceptor
+// rejects unknown tenants before they reach the pipeline).
+//
+// A nil *Pool is safe and unlimited, mirroring *Limiter.
+type Pool struct {
+	mu             sync.Mutex
+	buckets        map[string]*Limiter
+	callsPerMinute int
+	burst          int
+	maxConcurrent  int
+	logger         *zap.Logger
+}
+
+// NewPool builds a Pool. Bucket parameters are the per-tenant ceilings: each
+// cluster_id gets its own bucket sized this way. Non-positive callsPerMinute
+// or maxConcurrent returns nil (unlimited), matching New's contract.
+func NewPool(callsPerMinute, burst, maxConcurrent int, logger *zap.Logger) *Pool {
+	if callsPerMinute <= 0 || maxConcurrent <= 0 {
+		return nil
+	}
+	return &Pool{
+		buckets:        make(map[string]*Limiter),
+		callsPerMinute: callsPerMinute,
+		burst:          burst,
+		maxConcurrent:  maxConcurrent,
+		logger:         logger,
+	}
+}
+
+// Acquire selects the bucket for clusterID (creating it on first use) and
+// reserves a rate token + concurrency slot from that bucket. Returns false
+// without affecting any other tenant's bucket when this tenant is at its
+// ceiling.
+func (p *Pool) Acquire(clusterID string) bool {
+	if p == nil {
+		return true
+	}
+	bucket := p.bucket(clusterID)
+	return bucket.Acquire(clusterID)
+}
+
+// Release returns the slot to the calling tenant's bucket.
+func (p *Pool) Release(clusterID string) {
+	if p == nil {
+		return
+	}
+	bucket := p.bucket(clusterID)
+	bucket.Release(clusterID)
+}
+
+func (p *Pool) bucket(clusterID string) *Limiter {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if b, ok := p.buckets[clusterID]; ok {
+		return b
+	}
+	b := New(p.callsPerMinute, p.burst, p.maxConcurrent, p.logger)
+	p.buckets[clusterID] = b
+	return b
 }

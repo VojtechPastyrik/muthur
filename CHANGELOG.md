@@ -4,6 +4,42 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4] — 2026-06-29
+
+### Added
+
+- **Auto-tier on low LLM confidence.** When the model returns
+  `confidence: low` and asks for an auto-silence, the silence is now
+  refused (the alert still reaches on-call so a human can verify) and
+  the outcome is counted as
+  `muthur_silences_total{result="low_confidence"}`. A chronically
+  uncertain model is now visible as a metric rather than silently
+  muting pages.
+- **Per-tenant LLM cost backstop.** `llmlimit.Pool` gives every
+  `cluster_id` its own rate + concurrency bucket, lazily allocated
+  on first use. One noisy collector can no longer drain the LLM
+  budget for the others; saturation in one tenant cannot starve
+  another. Pool sizes use the same env knobs as before
+  (`LLM_MAX_CALLS_PER_MINUTE`, `LLM_BURST`, `LLM_MAX_CONCURRENT`)
+  applied per-tenant.
+- **Per-tenant LLM metrics.** `LLMCalls`, `LLMTokens`,
+  `LLMCallDuration`, `LLMValidationFailures`, `LLMRetries`,
+  `LLMDegraded`, and `LLMThrottled` all carry a `cluster_id` label.
+  Operators can now build per-tenant cost + reliability panels in
+  Grafana (multiply tokens by provider $/token).
+
+### Changed
+
+- `Limiter.Acquire` / `Release` take a `clusterID` argument so the
+  metric label is correctly attributed. Existing call sites are
+  migrated; tests updated.
+- `BACKLOG.md` was substantially out of date and has been refreshed
+  to mark EPIC 1 (gRPC), EPIC 2 (mTLS + CA + revocation + replay),
+  the v0.8.2 audit + redaction work, and EPIC 9 auto-tier / cost
+  backstop as shipped with their delivering versions. A "current
+  state" header preserves the original 2026-06-28 mapping for
+  reference.
+
 ## [0.8.3] — 2026-06-29
 
 ### Added

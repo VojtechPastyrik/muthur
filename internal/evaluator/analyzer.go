@@ -230,6 +230,14 @@ func (e *Evaluator) EvaluateIncident(ctx context.Context, payloads []*pb.AlertPa
 func (e *Evaluator) run(ctx context.Context, prompt Prompt) (*Analysis, error) {
 	start := time.Now()
 	name, model := e.provider.name(), e.provider.model()
+	// cluster_id is taken from the verified mTLS identity (RevocationInterceptor
+	// has already enforced payload.cluster_id == cert.cluster_id, so this matches
+	// the alert's origin). Empty when the call is exempt from auth (preflight),
+	// which keeps a single empty-string series rather than dropping the metric.
+	clusterID := ""
+	if ident, ok := auth.FromContext(ctx); ok && ident != nil {
+		clusterID = ident.ClusterID
+	}
 
 	auditID := e.auditInput(ctx, prompt, name, model)
 
@@ -240,24 +248,24 @@ func (e *Evaluator) run(ctx context.Context, prompt Prompt) (*Analysis, error) {
 		if err != nil {
 			// Transport error after the provider's own retries — not fixable by
 			// a corrective prompt. Degrade to raw delivery.
-			metrics.LLMCalls.WithLabelValues("error", name, model).Inc()
-			metrics.LLMCallDuration.WithLabelValues(name, model).Observe(time.Since(start).Seconds())
+			metrics.LLMCalls.WithLabelValues("error", name, model, clusterID).Inc()
+			metrics.LLMCallDuration.WithLabelValues(name, model, clusterID).Observe(time.Since(start).Seconds())
 			return nil, fmt.Errorf("%s call failed: %w", name, err)
 		}
 
-		metrics.LLMTokens.WithLabelValues("input", name, model).Add(float64(u.input))
-		metrics.LLMTokens.WithLabelValues("output", name, model).Add(float64(u.output))
+		metrics.LLMTokens.WithLabelValues("input", name, model, clusterID).Add(float64(u.input))
+		metrics.LLMTokens.WithLabelValues("output", name, model, clusterID).Add(float64(u.output))
 
 		analysis, verr := decodeAndValidate(raw)
 		if verr == nil {
 			e.auditOutput(auditID, raw, u, name, model)
-			metrics.LLMCalls.WithLabelValues("ok", name, model).Inc()
-			metrics.LLMCallDuration.WithLabelValues(name, model).Observe(time.Since(start).Seconds())
+			metrics.LLMCalls.WithLabelValues("ok", name, model, clusterID).Inc()
+			metrics.LLMCallDuration.WithLabelValues(name, model, clusterID).Observe(time.Since(start).Seconds())
 			return analysis, nil
 		}
 
 		lastErr = verr
-		metrics.LLMValidationFailures.WithLabelValues(name, model).Inc()
+		metrics.LLMValidationFailures.WithLabelValues(name, model, clusterID).Inc()
 		e.logger.Warn("LLM output failed schema validation",
 			zap.String("provider", name),
 			zap.String("model", model),
@@ -266,7 +274,7 @@ func (e *Evaluator) run(ctx context.Context, prompt Prompt) (*Analysis, error) {
 		)
 
 		if attempt < e.maxRetries {
-			metrics.LLMRetries.WithLabelValues(name, model).Inc()
+			metrics.LLMRetries.WithLabelValues(name, model, clusterID).Inc()
 			// Append correction to the User part — System rules stay intact so
 			// the correction can't be mistaken for an attacker-crafted override.
 			instruction = Prompt{System: prompt.System, User: prompt.User + correctiveSuffix(verr)}
@@ -275,9 +283,9 @@ func (e *Evaluator) run(ctx context.Context, prompt Prompt) (*Analysis, error) {
 
 	// Retries exhausted: degrade honestly rather than loosely parse. The final
 	// validation failure was already counted inside the loop above.
-	metrics.LLMDegraded.WithLabelValues(name, model).Inc()
-	metrics.LLMCalls.WithLabelValues("error", name, model).Inc()
-	metrics.LLMCallDuration.WithLabelValues(name, model).Observe(time.Since(start).Seconds())
+	metrics.LLMDegraded.WithLabelValues(name, model, clusterID).Inc()
+	metrics.LLMCalls.WithLabelValues("error", name, model, clusterID).Inc()
+	metrics.LLMCallDuration.WithLabelValues(name, model, clusterID).Observe(time.Since(start).Seconds())
 	e.logger.Error("LLM output invalid after retries, degrading to raw delivery",
 		zap.String("provider", name),
 		zap.String("model", model),
