@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.8.4] — 2026-06-29
+## [0.8.5] — 2026-06-29
 
 ### Added
 
@@ -22,6 +22,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   incidents, operator feedback, and the collector's enrichment +
   redaction surface. Companion `README.md` documents import + a $ math
   snippet for cost reporting.
+
+### Changed
+
+- `values.yaml` comment on `llmMaxCallsPerMinute` / `llmBurst` /
+  `llmMaxConcurrent` now flags the v0.8.4 semantic change to per-tenant
+  buckets, so an operator who sized them for total-across-tenants knows
+  to divide rather than discover the difference via a bill.
+
 
 - **Auto-tier on low LLM confidence.** When the model returns
   `confidence: low` and asks for an auto-silence, the silence is now
