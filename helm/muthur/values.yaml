@@ -240,11 +240,20 @@ config:
   # can delay a page before muthur falls back to delivering the raw alert. The
   # LLM enriches — it must never block delivery.
   llmTimeout: 20s
-  # --- Cost backstop ---
-  # Hard ceilings on Claude calls, the last line of defence after cache/dedup/
+  # --- Cost backstop (per tenant since v0.8.4) ---
+  # Hard ceilings on LLM calls, the last line of defence after cache/dedup/
   # correlation. Under a storm of distinct, uncacheable alerts the pipeline
-  # degrades to raw delivery instead of an unbounded bill. Set
-  # llmMaxCallsPerMinute or llmMaxConcurrent to 0 to disable.
+  # degrades to raw delivery instead of an unbounded bill.
+  #
+  # CHANGE NOTE: these values are now applied PER TENANT (per cluster_id).
+  # Before v0.8.4 the limiter was global and shared across all tenants. After
+  # v0.8.4 each tenant gets its own rate + concurrency bucket sized by the
+  # values below, so one noisy collector cannot drain the budget for others.
+  # If you previously sized these for "total across N tenants", you may want
+  # to divide accordingly.
+  #
+  # Set llmMaxCallsPerMinute or llmMaxConcurrent to 0 to disable the
+  # backstop entirely (unlimited per tenant).
   llmMaxCallsPerMinute: 60
   llmBurst: 15
   llmMaxConcurrent: 8
