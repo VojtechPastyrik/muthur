@@ -44,7 +44,7 @@ flowchart TD
 - **Persistent state (Redis/Dragonfly)** — dedup window, analysis cache, and feedback survive restarts and are shared across replicas when `redis.url` is set; falls back to an in-memory store otherwise
 - **Semantic LLM cache** — reuses a prior analysis for a *near-duplicate* alert (same root cause, different pod) via a local in-process embedder — no external embeddings call, so alert data never leaves the cluster. Opt-in via `semanticCacheEnabled`.
 - **Feedback loop** — every notification can carry 👍 useful / 👎 wrong links; recorded verdicts are replayed into future prompts as few-shot guidance so analyses improve per-cluster. Enable by setting `config.publicUrl`.
-- **Self-observability** — Prometheus metrics at `/metrics` (alert throughput, dedup/cache hit rate, LLM calls + token usage, notification delivery, incidents, feedback)
+- **Self-observability** — Prometheus metrics at `/metrics` (alert throughput, dedup/cache hit rate, LLM calls + token usage, notification delivery, incidents, feedback). Every LLM metric carries a `cluster_id` label so cost and reliability can be split per tenant. A ready-to-import Grafana dashboard ships at [`helm/muthur/grafana/dashboard.json`](helm/muthur/grafana/dashboard.json).
 - **AlertManager-style receivers** — multiple named receivers, any number of each type (Discord, Telegram, Slack, PagerDuty, webhook, SMTP/email). First-match routing by severity/cluster/alert/namespace, multiple receivers per rule — e.g. all alerts to Slack, critical also to email
 - **File-mounted secrets** — sensitive values come from Kubernetes Secrets mounted as files, never env vars (safer against `/proc`, ps, crash dump leakage)
 - **Flexible routing** — first-match rules by severity, cluster_id, alert_name, namespace

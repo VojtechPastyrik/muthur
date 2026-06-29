@@ -1,0 +1,298 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "MUTHUR — alert throughput, LLM cost + reliability, silences, notifications, collector enrichment + redaction. Per-tenant breakdown via the cluster_id template variable.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}, "id": 100, "panels": [], "title": "Alert flow", "type": "row"},
+
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "fieldConfig": {"defaults": {"unit": "alerts/s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 1},
+      "id": 1,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "sum by (cluster_id, status) (rate(muthur_alerts_received_total{cluster_id=~\"$cluster_id\"}[5m]))", "legendFormat": "{{cluster_id}} · {{status}}"}],
+      "title": "Alerts received (rate by cluster · status)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "fieldConfig": {"defaults": {"unit": "alerts/s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 1},
+      "id": 2,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "sum by (cluster_id) (rate(muthur_alerts_deduped_total{cluster_id=~\"$cluster_id\"}[5m]))", "legendFormat": "{{cluster_id}}"}],
+      "title": "Deduplicated alerts (suppressed at the sliding window)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 1},
+      "id": 3,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "muthur_pipeline_in_flight", "legendFormat": "in-flight"}],
+      "title": "Pipeline in-flight (correlator + evaluate + deliver)",
+      "type": "timeseries"
+    },
+
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 9}, "id": 101, "panels": [], "title": "LLM cost & latency", "type": "row"},
+
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Multiply by the configured provider $/token rate for a $ chart. Split by direction (input vs output) and cluster_id; sum across model labels.",
+      "fieldConfig": {"defaults": {"unit": "tokens/s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 10},
+      "id": 10,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "sum by (cluster_id, direction) (rate(muthur_llm_tokens_total{cluster_id=~\"$cluster_id\"}[5m]))", "legendFormat": "{{cluster_id}} · {{direction}}"}],
+      "title": "LLM tokens (rate by tenant · direction)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "fieldConfig": {"defaults": {"unit": "ops/s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 10},
+      "id": 11,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "sum by (result) (rate(muthur_llm_calls_total{cluster_id=~\"$cluster_id\"}[5m]))", "legendFormat": "{{result}}"}],
+      "title": "LLM calls (rate by result)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "End-to-end LLM evaluation latency (includes corrective retries). p95 over 30 min spike indicates a slow model or a retry storm.",
+      "fieldConfig": {"defaults": {"unit": "s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 18},
+      "id": 12,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "histogram_quantile(0.50, sum by (le, cluster_id) (rate(muthur_llm_call_duration_seconds_bucket{cluster_id=~\"$cluster_id\"}[5m])))", "legendFormat": "p50 · {{cluster_id}}"},
+        {"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "histogram_quantile(0.95, sum by (le, cluster_id) (rate(muthur_llm_call_duration_seconds_bucket{cluster_id=~\"$cluster_id\"}[5m])))", "legendFormat": "p95 · {{cluster_id}}"}
+      ],
+      "title": "LLM call duration (p50 / p95 by tenant)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Throttle events from the per-tenant cost backstop. A spike here means that tenant hit its rate or concurrency ceiling and the alerts degraded to raw delivery.",
+      "fieldConfig": {"defaults": {"unit": "ops/s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 18},
+      "id": 13,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "sum by (cluster_id, reason) (rate(muthur_llm_throttled_total{cluster_id=~\"$cluster_id\"}[5m]))", "legendFormat": "{{cluster_id}} · {{reason}}"}],
+      "title": "LLM throttled (per-tenant cost backstop hits)",
+      "type": "timeseries"
+    },
+
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 26}, "id": 102, "panels": [], "title": "LLM reliability & cache", "type": "row"},
+
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "fieldConfig": {"defaults": {"unit": "ops/s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 27},
+      "id": 20,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "sum by (cluster_id) (rate(muthur_llm_validation_failures_total{cluster_id=~\"$cluster_id\"}[5m]))", "legendFormat": "validation_fail · {{cluster_id}}"},
+        {"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "sum by (cluster_id) (rate(muthur_llm_retries_total{cluster_id=~\"$cluster_id\"}[5m]))", "legendFormat": "retries · {{cluster_id}}"}
+      ],
+      "title": "Schema validation failures & corrective retries",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Degraded = retries exhausted, alert delivered raw without LLM enrichment. A sustained non-zero rate here means the configured model can't hold the structured-output contract; consider a stronger model.",
+      "fieldConfig": {"defaults": {"unit": "ops/s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 27},
+      "id": 21,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "sum by (cluster_id, provider, model) (rate(muthur_llm_degraded_total{cluster_id=~\"$cluster_id\"}[5m]))", "legendFormat": "{{cluster_id}} · {{provider}} · {{model}}"}],
+      "title": "LLM degraded to raw delivery",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Cache hit rate over the lookup window. High = correlation+dedup+cache layers are working; near-zero = mostly first-of-a-kind alerts (legitimate spike) or a cache misconfig.",
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 27},
+      "id": 22,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "sum(rate(muthur_llm_cache_lookups_total{result=\"hit\"}[5m])) / clamp_min(sum(rate(muthur_llm_cache_lookups_total[5m])), 1)", "legendFormat": "hit rate"}],
+      "title": "LLM cache hit rate",
+      "type": "timeseries"
+    },
+
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 35}, "id": 103, "panels": [], "title": "Silences & notifications", "type": "row"},
+
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Auto-silence outcomes. low_confidence = the model asked for a silence with confidence: low and was refused (the page stays). blocked = critical severity or allowlist miss. created = silence applied at AlertManager. error = upstream failure.",
+      "fieldConfig": {"defaults": {"unit": "ops/s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 36},
+      "id": 30,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "sum by (result) (rate(muthur_silences_total[5m]))", "legendFormat": "{{result}}"}],
+      "title": "Auto-silence outcomes (incl. low_confidence refusals)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "fieldConfig": {"defaults": {"unit": "ops/s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 36},
+      "id": 31,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "sum by (receiver, result) (rate(muthur_notifications_total[5m]))", "legendFormat": "{{receiver}} · {{result}}"}],
+      "title": "Notifications (by receiver · result)",
+      "type": "timeseries"
+    },
+
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 44}, "id": 104, "panels": [], "title": "Incidents & feedback", "type": "row"},
+
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "fieldConfig": {"defaults": {"unit": "ops/s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 45},
+      "id": 40,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "sum by (size_bucket) (rate(muthur_incidents_total[5m]))", "legendFormat": "size {{size_bucket}}"}],
+      "title": "Incidents (rate by correlated-group size)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Operator verdicts via /feedback. A growing wrong/useful ratio under stable input means the LLM is drifting (rotate model or tighten prompt).",
+      "fieldConfig": {"defaults": {"unit": "ops/s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 45},
+      "id": 41,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "sum by (verdict) (rate(muthur_feedback_total[5m]))", "legendFormat": "{{verdict}}"}],
+      "title": "Operator feedback verdicts",
+      "type": "timeseries"
+    },
+
+    {"collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 53}, "id": 105, "panels": [], "title": "Collector (per-cluster enrichment + redaction)", "type": "row"},
+
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "fieldConfig": {"defaults": {"unit": "ops/s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 54},
+      "id": 50,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "sum by (result) (rate(muthur_collector_forwards_total[5m]))", "legendFormat": "{{result}}"}],
+      "title": "Collector forwards (by result)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "p95 enrichment latency by source. A sustained spike on the loki source typically means the cluster's logging stack is degraded; on prometheus, the metric query is slow.",
+      "fieldConfig": {"defaults": {"unit": "s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 54},
+      "id": 51,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "histogram_quantile(0.95, sum by (le, source) (rate(muthur_collector_enrich_duration_seconds_bucket[5m])))", "legendFormat": "p95 · {{source}}"}],
+      "title": "Enrichment p95 latency (loki / prometheus)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Pattern replacements made by the redactor, split by surface (log_line vs string). A drop on either path is a regression signal: the regex coverage may have lost a category.",
+      "fieldConfig": {"defaults": {"unit": "ops/s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 54},
+      "id": 52,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "sum by (surface) (rate(muthur_collector_redact_replacements_total[5m]))", "legendFormat": "{{surface}}"}],
+      "title": "Redactor replacements (by surface)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "description": "Fail-closed drops by reason. oversize = a single log line over REDACT_MAX_LINE_BYTES. budget = cumulative payload over REDACT_MAX_TOTAL_BYTES. oversize-string = a free-text field over REDACT_MAX_STRING_BYTES (annotation inflation attempt).",
+      "fieldConfig": {"defaults": {"unit": "ops/s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 62},
+      "id": 53,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "sum by (reason) (rate(muthur_collector_log_lines_dropped_total[5m]))", "legendFormat": "{{reason}}"}],
+      "title": "Redactor fail-closed drops (by reason)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "$datasource"},
+      "fieldConfig": {"defaults": {"unit": "ops/s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 62},
+      "id": 54,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "sum(rate(muthur_collector_alerts_dropped_total[5m]))", "legendFormat": "concurrency-cap drops"},
+        {"datasource": {"type": "prometheus", "uid": "$datasource"}, "expr": "sum(rate(muthur_collector_forward_retries_total[5m]))", "legendFormat": "forward retries"}
+      ],
+      "title": "Collector backpressure (drops + forward retries)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["muthur", "kubernetes", "alertmanager", "ai"],
+  "templating": {
+    "list": [
+      {
+        "current": {"selected": false, "text": "Prometheus", "value": "Prometheus"},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Datasource",
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {"selected": true, "text": ["All"], "value": ["$__all"]},
+        "datasource": {"type": "prometheus", "uid": "$datasource"},
+        "definition": "label_values(muthur_alerts_received_total, cluster_id)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Tenant (cluster_id)",
+        "multi": true,
+        "name": "cluster_id",
+        "options": [],
+        "query": {"query": "label_values(muthur_alerts_received_total, cluster_id)", "refId": "PrometheusVariableQueryEditor-VariableQuery"},
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {"from": "now-3h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "MUTHUR — overview",
+  "uid": "muthur-overview",
+  "version": 1,
+  "weekStart": ""
+}

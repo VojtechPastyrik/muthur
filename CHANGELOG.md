@@ -8,6 +8,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Grafana dashboard JSON** at `helm/muthur/grafana/dashboard.json`.
+  Templated by the `cluster_id` label (so a multi-tenant deployment is
+  one dashboard, not N), covers alert flow, LLM cost + latency + reliability,
+  silence outcomes (incl. the new `low_confidence` bucket), notifications,
+  incidents, operator feedback, and the collector's enrichment +
+  redaction surface. Companion `README.md` documents import + a $ math
+  snippet for cost reporting.
+
 - **Auto-tier on low LLM confidence.** When the model returns
   `confidence: low` and asks for an auto-silence, the silence is now
   refused (the alert still reaches on-call so a human can verify) and
