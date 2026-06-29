@@ -46,6 +46,11 @@ type Config struct {
 	// nonce cache TTL is 2×this. Defaults to 5m when unset.
 	ReplayWindow time.Duration
 
+	// TenantsReloadInterval is how often the brain stat-polls the tenants
+	// config file for an mtime bump. Shorter = revoke flag-flips propagate
+	// faster; longer = less stat() syscall churn. Defaults to 5s.
+	TenantsReloadInterval time.Duration
+
 	// LLM provider abstraction. Provider defaults to "anthropic" so an existing
 	// deployment with no new config behaves exactly as before. The resolved key
 	// (LLMAPIKey) comes from LLM_API_KEY_FILE (preferred, a mounted Secret) or
@@ -200,6 +205,11 @@ func Load() (*Config, error) {
 		llmMaxRetries = 1
 	}
 
+	tenantsReloadInterval, err := time.ParseDuration(envOr("TENANTS_RELOAD_INTERVAL", "5s"))
+	if err != nil || tenantsReloadInterval <= 0 {
+		tenantsReloadInterval = 5 * time.Second
+	}
+
 	replayWindow, err := time.ParseDuration(envOr("AUTH_REPLAY_WINDOW", "5m"))
 	if err != nil {
 		replayWindow = 5 * time.Minute
@@ -215,6 +225,7 @@ func Load() (*Config, error) {
 		IntermediateCAFile:       os.Getenv("INTERMEDIATE_CA_FILE"),
 		IntermediateKeyFile:      os.Getenv("INTERMEDIATE_KEY_FILE"),
 		ReplayWindow:             replayWindow,
+		TenantsReloadInterval:    tenantsReloadInterval,
 		LLMProvider:              llmProvider,
 		LLMModel:                 llmModel,
 		LLMBaseURL:               os.Getenv("LLM_BASE_URL"),

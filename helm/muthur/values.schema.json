@@ -145,7 +145,13 @@
         "alertmanagerUrl": { "type": "string" },
         "alertmanagerSilenceEnabled": { "type": "boolean" },
         "alertmanagerSilenceDuration": { "type": "string" },
-        "logLevel": { "type": "string", "enum": ["debug", "info", "warn", "error"] }
+        "logLevel": { "type": "string", "enum": ["debug", "info", "warn", "error"] },
+        "llm": {
+          "type": "object",
+          "properties": {
+            "auditMode": { "type": "string", "enum": ["off", "hash", "full"] }
+          }
+        }
       }
     },
     "ca": {

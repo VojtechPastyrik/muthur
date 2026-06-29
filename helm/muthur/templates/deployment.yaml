@@ -175,6 +175,8 @@ spec:
               value: /secrets/tls/intermediate/tls.key
             - name: AUTH_REPLAY_WINDOW
               value: {{ .Values.config.authReplayWindow | quote }}
+            - name: TENANTS_RELOAD_INTERVAL
+              value: {{ .Values.config.tenantsReloadInterval | quote }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:

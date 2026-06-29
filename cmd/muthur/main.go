@@ -207,7 +207,7 @@ func run() error {
 	// `revoked: true` flag-flip takes effect within seconds — without it,
 	// runtime revocation would require a brain restart and a leaked leaf cert
 	// would stay usable until expiry.
-	tenantsReloader, err := auth.NewTenantsReloader(cfg.ConfigFile, 5*time.Second, logger)
+	tenantsReloader, err := auth.NewTenantsReloader(cfg.ConfigFile, cfg.TenantsReloadInterval, logger)
 	if err != nil {
 		return fmt.Errorf("load tenants: %w", err)
 	}

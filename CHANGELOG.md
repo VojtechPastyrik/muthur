@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] — 2026-06-29
+
+### Added
+
+- `TENANTS_RELOAD_INTERVAL` env (default `5s`, exposed via
+  `config.tenantsReloadInterval` in the chart). Lets operators tune how
+  often the brain stat-polls the tenants config for an mtime change —
+  shorter propagates a revoke faster, longer reduces syscall churn.
+- `values.schema.json` now validates `config.llm.auditMode` as an enum of
+  `off | hash | full` so a typo is caught at `helm install`/`upgrade`
+  rather than at runtime via a silent fallback to `off`.
+- `LLM_AUDIT_MODE` added to `.env.example` for parity with the chart.
+
+### Fixed
+
+- `docs/migration-0.7-mtls.md` stray text on the title line.
+
 ## [0.8.2] — 2026-06-29
 
 ### Added

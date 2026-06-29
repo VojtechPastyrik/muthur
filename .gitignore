@@ -8,3 +8,6 @@ bin/
 
 # GSD planning artifacts (local only)
 .planning/
+
+# Local test fixtures
+test-*.yaml

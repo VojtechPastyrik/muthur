@@ -300,6 +300,11 @@ config:
   # less tolerance for clock skew between collectors and brain.
   authReplayWindow: "5m"
 
+  # Interval (Go duration) at which the brain stat-polls the tenants config
+  # file for changes. Shorter = revoke flag-flips propagate faster; longer =
+  # fewer stat() syscalls. Default 5s is a good balance.
+  tenantsReloadInterval: "5s"
+
 # --- Persistence ---
 # When url is set, dedup / analysis cache / feedback state is shared across
 # replicas and survives restarts (Redis or DragonflyDB, redis:// or rediss://).
