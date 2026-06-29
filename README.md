@@ -183,6 +183,50 @@ Beyond the existing settings, the new features add:
 | `INTERMEDIATE_CA_FILE` | _(required)_ | Intermediate CA cert path used to sign collector CSRs. |
 | `INTERMEDIATE_KEY_FILE` | _(required)_ | Intermediate CA private key path. |
 | `AUTH_REPLAY_WINDOW` | `5m` | Accepted clock-skew window for `X-Muthur-Timestamp`; nonce cache TTL is 2×. |
+| `TENANTS_RELOAD_INTERVAL` | `5s` | How often the brain stat-polls the tenants config file for changes. Shorter = `revoked: true` flag-flips propagate faster; longer = fewer stat() syscalls. |
+
+### Anti-prompt-injection
+
+Attacker-influencible content (log lines, label values, annotations) is
+sandboxed in two complementary ways before it reaches the LLM:
+
+1. **Structural role split.** The prompt is split into a `system` role
+   (analysis rules, vendor-authored, trusted) and a `user` role (the
+   fenced alert data). Anthropic and OpenAI-compatible providers both
+   deliver this split natively; the model is trained to weigh `system`
+   instructions above `user` content, so a hostile log line cannot
+   override the rules as easily as it could when both were concatenated
+   into one user-role string.
+2. **Textual fence + explicit rule.** Alert data is wrapped in a
+   `<untrusted_alert_data>...</untrusted_alert_data>` block, and the
+   system prompt names that block explicitly: any instruction inside it
+   is to be treated as evidence of a possible prompt-injection attempt,
+   not as a command.
+
+Neither layer is absolute on its own; together they're defence in depth.
+A corrective retry on schema-validation failure appends only to the
+`user` half, so the corrective path cannot be used to overwrite the
+system rules either.
+
+### LLM audit log
+
+Every LLM call can emit a structured `audit: true` record carrying the
+caller's verified mTLS identity (`tenant_id`, `cluster_id`,
+`cert_serial`), SHA-256 of the system and user prompts, and SHA-256 of
+the output. Modes selected by `LLM_AUDIT_MODE`:
+
+- `off` (default) — no audit log. Safe under storms; no overhead.
+- `hash` — identity + hashes only. Proves a call happened with a given
+  input under a specific verified cert, without inflating logs by
+  ~200KB per stacktrace-heavy alert.
+- `full` — identity + hashes + the full system prompt, user prompt and
+  output bodies. Choose only when an external retention sink (Loki +
+  object-lock storage, SIEM with WORM retention) is in place; k8s
+  container log rotation (10 MB × 5) eats the audit during a storm.
+
+Audit records pair input and output via a stable `audit_id` derived
+from the combined prompt hash. Filter your log sink on
+`{audit="true"}` to route audit traffic to dedicated retention.
 
 ## Prerequisites
 
