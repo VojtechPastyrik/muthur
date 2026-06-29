@@ -25,7 +25,7 @@ func newBootstrapHandler(t *testing.T, tenants ...Tenant) (*BootstrapHandler, st
 		t.Fatalf("NewTenants: %v", err)
 	}
 	st := store.NewMemory()
-	h := NewBootstrapHandler(idx, newTestSigner(t), st, "muthur:", zaptest.NewLogger(t))
+	h := NewBootstrapHandler(StaticTenants{T: idx}, newTestSigner(t), st, "muthur:", zaptest.NewLogger(t))
 	return h, st
 }
 

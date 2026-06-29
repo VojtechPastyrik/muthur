@@ -70,6 +70,63 @@ func AuthInterceptor(logger *zap.Logger) grpc.UnaryServerInterceptor {
 	}
 }
 
+// RevocationInterceptor rejects requests from a verified-but-revoked tenant.
+// Without it, a leaked leaf cert stays valid until expiry no matter how the
+// Tenants config is flipped — the bootstrap/renew flag-flip only blocks
+// re-issuance. Runs after AuthInterceptor (needs the identity in context) and
+// skips authExemptMethods because BootstrapCert performs its own revoked
+// check against the request body's cluster_id (the identity isn't in context
+// yet at that point).
+//
+// Takes a TenantsProvider rather than a static *Tenants so a hot-reload of the
+// tenants file is picked up between requests; a flag-flip to `revoked: true`
+// then takes effect within one reloader poll interval instead of waiting for
+// a pod restart.
+func RevocationInterceptor(provider auth.TenantsProvider, logger *zap.Logger) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if _, exempt := authExemptMethods[info.FullMethod]; exempt {
+			return handler(ctx, req)
+		}
+
+		id, ok := auth.FromContext(ctx)
+		if !ok {
+			logger.Warn("revocation interceptor reached without identity — order bug?",
+				zap.String("method", info.FullMethod),
+			)
+			return nil, status.Error(codes.Unauthenticated, "no identity")
+		}
+
+		tenants := provider.Current()
+		if tenants == nil {
+			logger.Warn("revocation interceptor has no tenants snapshot — reloader misconfigured?",
+				zap.String("method", info.FullMethod),
+			)
+			return nil, status.Error(codes.Internal, "tenants unavailable")
+		}
+		tenant, ok := tenants.Lookup(id.ClusterID)
+		if !ok {
+			// A cert presents a cluster_id with no matching tenant entry — the
+			// tenant was hard-deleted from config while a leaf was still in the
+			// wild. Treat as revocation: refuse the request.
+			logger.Warn("rejecting request from unknown tenant",
+				zap.String("cluster_id", id.ClusterID),
+				zap.String("cert_serial", id.SerialNumber),
+				zap.String("method", info.FullMethod),
+			)
+			return nil, status.Error(codes.PermissionDenied, "tenant not configured")
+		}
+		if tenant.Revoked {
+			logger.Warn("rejecting request from revoked tenant",
+				zap.String("cluster_id", id.ClusterID),
+				zap.String("cert_serial", id.SerialNumber),
+				zap.String("method", info.FullMethod),
+			)
+			return nil, status.Error(codes.PermissionDenied, "tenant revoked")
+		}
+		return handler(ctx, req)
+	}
+}
+
 // ReplayInterceptor reads the freshness timestamp + single-use nonce from
 // incoming metadata and verifies them via auth.ReplayGuard. Skipped for
 // authExemptMethods — the bootstrap path has its own single-use guarantee

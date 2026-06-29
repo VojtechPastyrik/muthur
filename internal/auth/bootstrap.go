@@ -118,7 +118,7 @@ type BootstrapResult struct {
 //  5. Returns the leaf + CA chain so the collector can install it and
 //     immediately switch to mTLS for /ingest and /sign-csr.
 type BootstrapHandler struct {
-	tenants *Tenants
+	tenants TenantsProvider
 	signer  *Signer
 	store   store.Store
 	prefix  string
@@ -130,7 +130,11 @@ type BootstrapHandler struct {
 	mu sync.Mutex // serialises in-process bootstrap attempts; SetNX makes it correct, this just reduces log spam under contention
 }
 
-func NewBootstrapHandler(tenants *Tenants, signer *Signer, st store.Store, storePrefix string, logger *zap.Logger) *BootstrapHandler {
+// NewBootstrapHandler takes a TenantsProvider so a hot-reload of the tenants
+// file (e.g. adding a new tenant, flipping `revoked: true`) is picked up
+// without a brain restart. Pass StaticTenants{T: ...} to keep the old
+// fixed-snapshot behaviour in tests.
+func NewBootstrapHandler(tenants TenantsProvider, signer *Signer, st store.Store, storePrefix string, logger *zap.Logger) *BootstrapHandler {
 	return &BootstrapHandler{
 		tenants: tenants,
 		signer:  signer,
@@ -149,7 +153,11 @@ func (h *BootstrapHandler) Issue(ctx context.Context, in BootstrapInput) (*Boots
 		return nil, ErrBootstrapBadRequest
 	}
 
-	tenant, ok := h.tenants.Lookup(in.ClusterID)
+	tenants := h.tenants.Current()
+	if tenants == nil {
+		return nil, ErrBootstrapInternal
+	}
+	tenant, ok := tenants.Lookup(in.ClusterID)
 	if !ok {
 		h.logger.Warn("bootstrap for unknown cluster", zap.String("cluster_id", in.ClusterID))
 		return nil, ErrBootstrapUnauthorized

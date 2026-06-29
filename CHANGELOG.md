@@ -4,6 +4,45 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] — 2026-06-29
+
+### Added
+
+- **Runtime cert revocation.** A new gRPC interceptor rejects requests from
+  any verified tenant whose entry has `revoked: true` (or has been hard-
+  deleted from the config). Before this, the `revoked` flag only blocked
+  re-issuance — a leaked leaf cert stayed usable until expiry. Combined
+  with hot-reload below, a flag-flip takes effect within ~5s and no brain
+  restart is needed.
+- **Tenants config hot-reload.** The brain now stat-polls `MUTHUR_CONFIG_FILE`
+  every 5s and atomically swaps the in-memory tenant snapshot when the file
+  mtime advances. Mirrors the existing TLS cert reloader pattern; no
+  fsnotify dependency. A torn write or bad YAML keeps the previous snapshot
+  serving, so a mid-update ConfigMap cannot lock every collector out.
+- **Structural anti-prompt-injection.** The Anthropic and OpenAI-compatible
+  providers now split the prompt into a `system` role (analysis rules,
+  trusted, vendor-authored) and a `user` role (alert data, fenced with
+  `<untrusted_alert_data>`, attacker-influencible). The textual fence is
+  retained as defence-in-depth. Attacker-controlled log lines reach the
+  model in the user role, which the instruction-hierarchy training weighs
+  below the system role.
+- **`LLM_AUDIT_MODE` (default `off`).** Per-call audit log of LLM input /
+  output with three modes: `off` (no audit), `hash` (identity + SHA-256 of
+  the system prompt, user prompt and output — proves a call happened
+  without inflating logs), `full` (identity + hashes + bodies, intended
+  for deployments with an external retention sink). `off` is the default
+  so a stacktrace-heavy alert storm does not eat the k8s container log
+  ring buffer.
+
+### Changed
+
+- `RevocationInterceptor` runs between `AuthInterceptor` and
+  `ReplayInterceptor`. `BootstrapCert` remains exempt (no identity in
+  context yet — the bootstrap handler keeps its own revoked check).
+- `auth.BootstrapHandler` and `auth.RenewHandler` now take a
+  `TenantsProvider` instead of a `*Tenants`. Static deployments can wrap
+  their fixed snapshot with `auth.StaticTenants{T: ...}`.
+
 ## [0.8.1] — 2026-06-28
 
 ### Fixed

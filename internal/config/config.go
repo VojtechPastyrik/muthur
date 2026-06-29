@@ -57,6 +57,17 @@ type Config struct {
 	LLMSchemaMode  string
 	LLMTemperature float64
 	LLMMaxRetries  int
+	// LLMAuditMode controls per-call audit logging of LLM input/output.
+	//   "off"  — default. No audit log at all; minimal log volume.
+	//   "hash" — log identity + SHA-256 of prompt/output, no bodies. Proves
+	//            a call happened with a given input under the verified cert,
+	//            without inflating logs by 200KB/alert on stacktrace-heavy
+	//            payloads.
+	//   "full" — log identity + hashes + full bodies. Only safe with an
+	//            external retention sink (Loki + object-lock, SIEM, …);
+	//            otherwise k8s container log rotation (10MB×5) eats the
+	//            audit during a storm.
+	LLMAuditMode string
 
 	// Cost backstop: hard ceilings on LLM calls regardless of cache/dedup/
 	// correlation. A storm of distinct, uncacheable alerts degrades to raw
@@ -211,6 +222,7 @@ func Load() (*Config, error) {
 		LLMSchemaMode:            llmSchemaMode,
 		LLMTemperature:           llmTemperature,
 		LLMMaxRetries:            llmMaxRetries,
+		LLMAuditMode:             strings.ToLower(envOr("LLM_AUDIT_MODE", "off")),
 		LLMTimeout:               llmTimeout,
 		LLMMaxCallsPerMinute:     llmMaxPerMin,
 		LLMBurst:                 llmBurst,

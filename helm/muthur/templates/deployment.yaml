@@ -90,6 +90,8 @@ spec:
               value: {{ .Values.config.llm.temperature | quote }}
             - name: LLM_MAX_RETRIES
               value: {{ .Values.config.llm.maxRetries | quote }}
+            - name: LLM_AUDIT_MODE
+              value: {{ .Values.config.llm.auditMode | quote }}
             {{- if .Values.config.llm.apiKeySecretKey }}
             # API key is mounted as a FILE (never a plain env var). The Secret
             # key below is surfaced at /secrets/llm/api-key.

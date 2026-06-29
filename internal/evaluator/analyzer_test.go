@@ -30,7 +30,7 @@ func (f *fakeProvider) name() string     { return "fake" }
 func (f *fakeProvider) model() string    { return "fake-1" }
 func (f *fakeProvider) structured() bool { return true }
 
-func (f *fakeProvider) complete(_ context.Context, _ string) (json.RawMessage, usage, error) {
+func (f *fakeProvider) complete(_ context.Context, _ Prompt) (json.RawMessage, usage, error) {
 	i := f.calls
 	f.calls++
 	if i < len(f.errs) && f.errs[i] != nil {
@@ -51,7 +51,7 @@ func TestEvaluator_ValidFirstTry(t *testing.T) {
 	f := &fakeProvider{outputs: []json.RawMessage{json.RawMessage(validAnalysisJSON)}}
 	e := newTestEvaluator(f, 1)
 
-	a, err := e.run(context.Background(), "prompt")
+	a, err := e.run(context.Background(), Prompt{User: "prompt"})
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestEvaluator_InvalidThenValid(t *testing.T) {
 	}}
 	e := newTestEvaluator(f, 1)
 
-	a, err := e.run(context.Background(), "prompt")
+	a, err := e.run(context.Background(), Prompt{User: "prompt"})
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestEvaluator_InvalidTwice_Degrades(t *testing.T) {
 	}}
 	e := newTestEvaluator(f, 1)
 
-	a, err := e.run(context.Background(), "prompt")
+	a, err := e.run(context.Background(), Prompt{User: "prompt"})
 	if a != nil {
 		t.Errorf("analysis = %+v, want nil on degrade", a)
 	}
@@ -105,7 +105,7 @@ func TestEvaluator_TransportError_NoRetryLoop(t *testing.T) {
 	f := &fakeProvider{errs: []error{errors.New("dial tcp: connection refused")}}
 	e := newTestEvaluator(f, 1)
 
-	a, err := e.run(context.Background(), "prompt")
+	a, err := e.run(context.Background(), Prompt{User: "prompt"})
 	if a != nil {
 		t.Errorf("analysis = %+v, want nil", a)
 	}
@@ -124,7 +124,7 @@ func TestEvaluator_ZeroRetries_DegradesImmediately(t *testing.T) {
 	f := &fakeProvider{outputs: []json.RawMessage{json.RawMessage(invalidAnalysisJSON)}}
 	e := newTestEvaluator(f, 0)
 
-	_, err := e.run(context.Background(), "prompt")
+	_, err := e.run(context.Background(), Prompt{User: "prompt"})
 	if !errors.Is(err, ErrDegraded) {
 		t.Fatalf("err = %v, want ErrDegraded", err)
 	}

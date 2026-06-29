@@ -48,7 +48,7 @@ flowchart TD
 - **AlertManager-style receivers** — multiple named receivers, any number of each type (Discord, Telegram, Slack, PagerDuty, webhook, SMTP/email). First-match routing by severity/cluster/alert/namespace, multiple receivers per rule — e.g. all alerts to Slack, critical also to email
 - **File-mounted secrets** — sensitive values come from Kubernetes Secrets mounted as files, never env vars (safer against `/proc`, ps, crash dump leakage)
 - **Flexible routing** — first-match rules by severity, cluster_id, alert_name, namespace
-- **Per-cluster authentication** — each collector carries its own token; muthur validates both token and cluster_id
+- **Per-cluster authentication** — each collector presents a client certificate signed by the vendor intermediate CA; muthur enforces `payload.cluster_id == cert.cluster_id` so a leaked cert can't impersonate another cluster
 - **Deduplication** — SHA256-keyed sliding window, configurable TTL
 - **AlertManager silence integration** — Claude can request auto-silences for known transient alerts. Guarded: critical-severity alerts are *never* auto-silenced, and an optional alertname allowlist (`ALERTMANAGER_SILENCE_ALLOWLIST`) restricts what may be muted — defence against a prompt-injected log line steering a silence onto a real page
 - **LLM never blocks delivery** — each Claude call is bounded by `LLM_TIMEOUT`; on timeout/error the raw alert is delivered without enrichment instead of holding the page
@@ -119,9 +119,15 @@ client cert signed by the vendor intermediate CA.
 
 | RPC              | Auth                       | Purpose                                                                                                  |
 |------------------|----------------------------|----------------------------------------------------------------------------------------------------------|
-| `Ingest`         | mTLS + replay metadata     | `AlertPayload` from collectors; brain enforces `payload.cluster_id == cert.cluster_id`.                  |
+| `Ingest`         | mTLS + replay metadata     | `AlertPayload` from collectors; brain enforces `payload.cluster_id == cert.cluster_id` and rejects revoked tenants. |
 | `SignCSR`        | mTLS + replay metadata     | Renewal: takes a PEM CSR, returns a fresh leaf signed by the intermediate.                               |
 | `BootstrapCert`  | One-shot bootstrap token   | First enrolment: SHA-256(token) must match a tenant entry; mints the initial leaf. No client cert needed. |
+
+Every authenticated RPC also runs through a runtime **revocation check**:
+flipping `revoked: true` for a tenant in the config file takes effect within
+~5s (config is hot-reloaded by mtime poll, mirroring the cert reloader). A
+leaked client cert can therefore be cut off without a brain restart and
+without waiting for the leaf to expire.
 
 Reflection is registered, so operators can introspect the service in
 production with `grpcurl -insecure muthur-api:443 list`.
@@ -155,6 +161,7 @@ Beyond the existing settings, the new features add:
 | `LLM_MAX_CALLS_PER_MINUTE` | `60` | Cost backstop: sustained LLM call ceiling (0 disables) |
 | `LLM_BURST` | `15` | Cost backstop: max instantaneous burst of LLM calls |
 | `LLM_MAX_CONCURRENT` | `8` | Cost backstop: max in-flight LLM calls (0 disables) |
+| `LLM_AUDIT_MODE` | `off` | Per-call audit log of LLM input/output: `off` (default, no audit), `hash` (identity + SHA-256 of system/user prompt + output, no bodies), `full` (identity + hashes + full bodies). Pick `full` only with an external retention sink — k8s container log rotation (default 10MB×5) eats the audit during a storm. |
 | `ALERTMANAGER_SILENCE_ALLOWLIST` | _(empty)_ | Comma-separated alertnames eligible for auto-silence; empty = no restriction. Critical alerts are never silenced |
 | `REDIS_URL` | _(empty)_ | Redis/Dragonfly connection string; empty → in-memory store |
 | `REDIS_PREFIX` | `muthur:` | Key namespace prefix |
@@ -190,7 +197,7 @@ Beyond the existing settings, the new features add:
 make proto
 
 cp .env.example .env
-# Fill in ANTHROPIC_API_KEY, at least one COLLECTOR_TOKEN_*, and MUTHUR_CONFIG_FILE
+# Fill in ANTHROPIC_API_KEY and MUTHUR_CONFIG_FILE
 make dev
 ```
 

@@ -59,7 +59,7 @@ func TestOpenAI_SchemaMode(t *testing.T) {
 	defer srv.Close()
 
 	p := newOpenAIProvider(srv.URL, "sk-1", "qwen2.5", modeSchema, 0, 5*time.Second, zap.NewNop())
-	raw, u, err := p.complete(context.Background(), "analyse this")
+	raw, u, err := p.complete(context.Background(), Prompt{User: "analyse this"})
 	if err != nil {
 		t.Fatalf("complete: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestOpenAI_JSONObjectMode(t *testing.T) {
 	defer srv.Close()
 
 	p := newOpenAIProvider(srv.URL, "", "llama3.1", modeJSONObject, 0, 5*time.Second, zap.NewNop())
-	raw, _, err := p.complete(context.Background(), "analyse this")
+	raw, _, err := p.complete(context.Background(), Prompt{User: "analyse this"})
 	if err != nil {
 		t.Fatalf("complete: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestOpenAI_AutoDowngrade(t *testing.T) {
 	defer srv.Close()
 
 	p := newOpenAIProvider(srv.URL, "", "ollama-model", modeAuto, 0, 5*time.Second, zap.NewNop())
-	raw, _, err := p.complete(context.Background(), "analyse this")
+	raw, _, err := p.complete(context.Background(), Prompt{User: "analyse this"})
 	if err != nil {
 		t.Fatalf("complete: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestOpenAI_HardErrorPropagates(t *testing.T) {
 
 	// json-object mode so a 500 is not mistaken for a schema-capability gap.
 	p := newOpenAIProvider(srv.URL, "", "m", modeJSONObject, 0, time.Second, zap.NewNop())
-	if _, _, err := p.complete(context.Background(), "x"); err == nil {
+	if _, _, err := p.complete(context.Background(), Prompt{User: "x"}); err == nil {
 		t.Error("want error on repeated 5xx")
 	}
 }

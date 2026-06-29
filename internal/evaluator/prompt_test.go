@@ -58,7 +58,7 @@ func TestBuildPrompt_ContainsAllFields(t *testing.T) {
 		"Restarts: 3", "app=my-app", "100 total lines", "report_analysis",
 	}
 	for _, check := range checks {
-		if !strings.Contains(prompt, check) {
+		if !strings.Contains(prompt.String(),check) {
 			t.Errorf("prompt missing: %q", check)
 		}
 	}
@@ -66,7 +66,7 @@ func TestBuildPrompt_ContainsAllFields(t *testing.T) {
 
 func TestBuildPrompt_EmptyPayload(t *testing.T) {
 	prompt := buildPrompt(&pb.AlertPayload{}, nil)
-	if !strings.Contains(prompt, "report_analysis") {
+	if !strings.Contains(prompt.String(),"report_analysis") {
 		t.Error("prompt should always instruct calling report_analysis")
 	}
 }
@@ -77,10 +77,10 @@ func TestBuildPrompt_FewShot(t *testing.T) {
 		{AlertName: "HighMemory", Verdict: "useful", Analysis: &Analysis{RootCause: "memory leak"}},
 	}
 	prompt := buildPrompt(samplePayload(), examples)
-	if !strings.Contains(prompt, "WRONG") || !strings.Contains(prompt, "network blip") {
+	if !strings.Contains(prompt.String(),"WRONG") || !strings.Contains(prompt.String(),"network blip") {
 		t.Error("prompt missing wrong-verdict few-shot")
 	}
-	if !strings.Contains(prompt, "memory leak") {
+	if !strings.Contains(prompt.String(),"memory leak") {
 		t.Error("prompt missing useful-verdict few-shot")
 	}
 }
@@ -90,10 +90,10 @@ func TestBuildIncidentPrompt(t *testing.T) {
 	b := samplePayload()
 	b.AlertName = "PodCrashLoop"
 	prompt := buildIncidentPrompt([]*pb.AlertPayload{a, b}, nil)
-	if !strings.Contains(prompt, "2 correlated alerts") {
+	if !strings.Contains(prompt.String(),"2 correlated alerts") {
 		t.Error("incident prompt should state the alert count")
 	}
-	if !strings.Contains(prompt, "HighMemory") || !strings.Contains(prompt, "PodCrashLoop") {
+	if !strings.Contains(prompt.String(),"HighMemory") || !strings.Contains(prompt.String(),"PodCrashLoop") {
 		t.Error("incident prompt should render all alerts")
 	}
 }

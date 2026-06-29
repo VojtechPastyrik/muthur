@@ -102,6 +102,7 @@ func run() error {
 		Temperature: cfg.LLMTemperature,
 		MaxRetries:  cfg.LLMMaxRetries,
 		Timeout:     cfg.LLMTimeout,
+		AuditMode:   cfg.LLMAuditMode,
 	}, logger)
 	if err != nil {
 		return fmt.Errorf("init evaluator: %w", err)
@@ -202,16 +203,20 @@ func run() error {
 	}
 
 	// Tenants are loaded from the same YAML config file the receivers live in
-	// (vendor-managed via GitOps). The index is built once at startup; a
-	// restart picks up additions, revocations, and bootstrap token rotations.
-	tenants, err := auth.NewTenants(fileCfg.Tenants)
+	// (vendor-managed via GitOps). The reloader stat-polls the file so a
+	// `revoked: true` flag-flip takes effect within seconds — without it,
+	// runtime revocation would require a brain restart and a leaked leaf cert
+	// would stay usable until expiry.
+	tenantsReloader, err := auth.NewTenantsReloader(cfg.ConfigFile, 5*time.Second, logger)
 	if err != nil {
 		return fmt.Errorf("load tenants: %w", err)
 	}
-	logger.Info("tenants loaded", zap.Int("count", len(fileCfg.Tenants)))
+	tenantsReloader.Start()
+	defer tenantsReloader.Stop()
+	logger.Info("tenants loaded", zap.Int("count", tenantsReloader.Current().Len()))
 
-	bootstrapH := auth.NewBootstrapHandler(tenants, signer, st, cfg.RedisPrefix, logger)
-	renewH := auth.NewRenewHandler(tenants, signer, logger)
+	bootstrapH := auth.NewBootstrapHandler(tenantsReloader, signer, st, cfg.RedisPrefix, logger)
+	renewH := auth.NewRenewHandler(tenantsReloader, signer, logger)
 
 	ingestH := ingest.NewHandler(pipe, logger)
 
@@ -224,6 +229,7 @@ func run() error {
 		grpc.Creds(credentials.NewTLS(tlsCfg)),
 		grpc.ChainUnaryInterceptor(
 			grpcsrv.AuthInterceptor(logger),
+			grpcsrv.RevocationInterceptor(tenantsReloader, logger),
 			grpcsrv.ReplayInterceptor(replayGuard, logger),
 		),
 	)

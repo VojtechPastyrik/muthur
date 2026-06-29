@@ -15,7 +15,7 @@ func newRenewHandler(t *testing.T, tenants ...Tenant) *RenewHandler {
 	if err != nil {
 		t.Fatalf("NewTenants: %v", err)
 	}
-	return NewRenewHandler(idx, newTestSigner(t), zaptest.NewLogger(t))
+	return NewRenewHandler(StaticTenants{T: idx}, newTestSigner(t), zaptest.NewLogger(t))
 }
 
 func ctxWith(id *Identity) context.Context {

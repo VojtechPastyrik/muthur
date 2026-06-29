@@ -195,6 +195,15 @@ config:
     temperature: "0"
     # Corrective structured-output retries before degrading to raw delivery.
     maxRetries: 1
+    # Per-call audit log of LLM input/output:
+    #   "off"  — default, no audit log (zero overhead, safe for storms).
+    #   "hash" — log identity + SHA-256 of system/user prompt + output, no
+    #            bodies. Proves a call happened, without inflating logs by
+    #            ~200KB/alert on stacktrace-heavy payloads.
+    #   "full" — log identity + hashes + full bodies. Only safe with an
+    #            external retention sink (Loki + object lock, SIEM with WORM);
+    #            otherwise k8s container log rotation (10MB×5) eats it.
+    auditMode: "off"
     # Secret key holding the LLM API key. Mounted as a FILE at
     # /secrets/llm/api-key (never a plain env var). Kept as ANTHROPIC_API_KEY so
     # existing Secret/ExternalSecret data is unchanged; the slot is provider-

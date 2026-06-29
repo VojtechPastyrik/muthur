@@ -41,12 +41,12 @@ type RenewResult struct {
 // fresh keypair, sends a CSR, the brain returns the signed leaf, and the
 // collector swaps it in via fsnotify without restarting.
 type RenewHandler struct {
-	tenants *Tenants
+	tenants TenantsProvider
 	signer  *Signer
 	logger  *zap.Logger
 }
 
-func NewRenewHandler(tenants *Tenants, signer *Signer, logger *zap.Logger) *RenewHandler {
+func NewRenewHandler(tenants TenantsProvider, signer *Signer, logger *zap.Logger) *RenewHandler {
 	return &RenewHandler{tenants: tenants, signer: signer, logger: logger}
 }
 
@@ -62,11 +62,17 @@ func (h *RenewHandler) Issue(ctx context.Context, in RenewInput) (*RenewResult, 
 		return nil, ErrNoIdentity
 	}
 
+	tenants := h.tenants.Current()
+	if tenants == nil {
+		h.logger.Warn("sign-csr reached with no tenants snapshot — reloader misconfigured?")
+		return nil, ErrRenewForbidden
+	}
+
 	// If the tenant was revoked since the existing cert was issued, refuse
-	// to renew. Existing cert keeps working until expiry — operators who
-	// want immediate cutoff also drop /ingest by the same identity via the
-	// deny-list path (future commit).
-	if tenant, found := h.tenants.Lookup(id.ClusterID); found && tenant.Revoked {
+	// to renew. Existing cert keeps working until expiry; the runtime ingest
+	// path (RevocationInterceptor) blocks the leaked cert from being used.
+	tenant, found := tenants.Lookup(id.ClusterID)
+	if found && tenant.Revoked {
 		h.logger.Warn("sign-csr for revoked tenant", zap.String("identity", id.String()))
 		return nil, ErrRenewForbidden
 	}
@@ -79,7 +85,7 @@ func (h *RenewHandler) Issue(ctx context.Context, in RenewInput) (*RenewResult, 
 	// clamps to MaxLeafDuration so a bogus tenant config can't extend
 	// validity beyond the global ceiling.
 	duration := h.signer.MaxLeafDuration
-	if tenant, found := h.tenants.Lookup(id.ClusterID); found && tenant.CertDuration > 0 {
+	if found && tenant.CertDuration > 0 {
 		duration = tenant.CertDuration
 	}
 

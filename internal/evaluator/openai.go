@@ -166,7 +166,7 @@ const jsonObjectInstruction = "\n\nRespond with a single JSON object and nothing
 // complete sends the prompt and returns the raw JSON object the model produced.
 // It handles transport retries with backoff and, under modeAuto, a one-time
 // downgrade from schema to json-object when the endpoint rejects the schema.
-func (p *openAIProvider) complete(ctx context.Context, prompt string) (json.RawMessage, usage, error) {
+func (p *openAIProvider) complete(ctx context.Context, prompt Prompt) (json.RawMessage, usage, error) {
 	// Per-call bound comes from httpClient.Timeout, set at construction.
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
@@ -204,15 +204,21 @@ func (p *openAIProvider) complete(ctx context.Context, prompt string) (json.RawM
 // do performs a single chat completion. It returns the raw content JSON, token
 // usage, a flag indicating the endpoint rejected the JSON Schema response_format
 // (so the caller can downgrade), and an error.
-func (p *openAIProvider) do(ctx context.Context, prompt string, mode schemaMode) (json.RawMessage, usage, bool, error) {
-	userContent := prompt
+func (p *openAIProvider) do(ctx context.Context, prompt Prompt, mode schemaMode) (json.RawMessage, usage, bool, error) {
+	userContent := prompt.User
 	if mode == modeJSONObject {
 		userContent += jsonObjectInstruction
 	}
 
+	messages := make([]chatMessage, 0, 2)
+	if prompt.System != "" {
+		messages = append(messages, chatMessage{Role: "system", Content: prompt.System})
+	}
+	messages = append(messages, chatMessage{Role: "user", Content: userContent})
+
 	reqBody := chatRequest{
 		Model:          p.mdl,
-		Messages:       []chatMessage{{Role: "user", Content: userContent}},
+		Messages:       messages,
 		MaxTokens:      1024,
 		Temperature:    p.temperature,
 		ResponseFormat: responseFormat(mode),
@@ -310,11 +316,11 @@ func (p *openAIProvider) preflight(ctx context.Context) {
 	defer cancel()
 
 	mode := p.effectiveMode()
-	_, _, unsupported, err := p.do(ctx, "preflight: respond with a minimal valid analysis object.", mode)
+	_, _, unsupported, err := p.do(ctx, Prompt{User: "preflight: respond with a minimal valid analysis object."}, mode)
 	if unsupported && p.currentMode() == modeAuto {
 		p.downgrade()
 		// Re-probe in the downgraded mode so a reachable endpoint preflights clean.
-		_, _, _, err = p.do(ctx, "preflight: respond with a minimal valid analysis object.", modeJSONObject)
+		_, _, _, err = p.do(ctx, Prompt{User: "preflight: respond with a minimal valid analysis object."}, modeJSONObject)
 	}
 	if err != nil {
 		p.logger.Warn("LLM endpoint preflight failed; starting anyway, alerts will degrade until it recovers",

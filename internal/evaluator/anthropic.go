@@ -57,7 +57,14 @@ func analysisTool() anthropic.ToolParam {
 // input. Transport-level retries (network/transient failures) are handled here
 // with the same exponential backoff as the original implementation; schema
 // validation and corrective retries live in the shared Evaluator.run.
-func (p *anthropicProvider) complete(ctx context.Context, prompt string) (json.RawMessage, usage, error) {
+//
+// The prompt is delivered as a structural system/user split: System carries
+// the analysis rules + anti-injection guidance via Anthropic's native System
+// parameter, User carries the fenced alert data as the only user-role
+// message. Together with the textual <untrusted_alert_data> fence in User,
+// this gives two layers of separation between attacker-controlled log text
+// and the rules that govern the model's verdict.
+func (p *anthropicProvider) complete(ctx context.Context, prompt Prompt) (json.RawMessage, usage, error) {
 	// Bound each attempt independently so a single stalled connection can't
 	// consume the entire pipeline deadline — the LLM enriches, it must never
 	// hold a page hostage.
@@ -68,6 +75,11 @@ func (p *anthropicProvider) complete(ctx context.Context, prompt string) (json.R
 	}
 
 	tool := analysisTool()
+
+	var systemBlocks []anthropic.TextBlockParam
+	if prompt.System != "" {
+		systemBlocks = []anthropic.TextBlockParam{{Text: prompt.System}}
+	}
 
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
@@ -87,11 +99,12 @@ func (p *anthropicProvider) complete(ctx context.Context, prompt string) (json.R
 		message, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{
 			Model:     anthropic.Model(p.mdl),
 			MaxTokens: 1024,
+			System:    systemBlocks,
 			Tools:     []anthropic.ToolUnionParam{{OfTool: &tool}},
 			// Force the model to emit the structured tool call rather than prose.
 			ToolChoice: anthropic.ToolChoiceParamOfTool(tool.Name),
 			Messages: []anthropic.MessageParam{
-				anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
+				anthropic.NewUserMessage(anthropic.NewTextBlock(prompt.User)),
 			},
 		})
 		if err != nil {
