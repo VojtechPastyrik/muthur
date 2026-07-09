@@ -84,10 +84,18 @@ func (p *Pipeline) Drain() {
 func (p *Pipeline) Process(payload *pb.AlertPayload) {
 	metrics.AlertsReceived.WithLabelValues(payload.ClusterId, statusLabel(payload)).Inc()
 
-	// Resolved alerts bypass dedup, Claude, and correlation: they carry no
-	// analysis and should be delivered promptly to close the loop on the
-	// receiver side.
+	// Resolved alerts bypass Claude and correlation: they carry no analysis
+	// and should be delivered promptly to close the loop on the receiver
+	// side. They still dedupe — AlertManager re-sends the whole group on
+	// every group state change, so the same resolved alert arrives multiple
+	// times.
 	if payload.Status == "resolved" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		dup := p.dedup.IsDuplicateResolved(ctx, payload)
+		cancel()
+		if dup {
+			return
+		}
 		p.processResolved(payload)
 		return
 	}
