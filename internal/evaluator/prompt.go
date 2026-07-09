@@ -31,6 +31,10 @@ Rules:
 - Call report_analysis exactly once.
 `
 
+// maxPromptEvents bounds the events section of the prompt regardless of what
+// a collector sends.
+const maxPromptEvents = 50
+
 // buildPrompt renders the single-alert prompt. System carries the rules and
 // few-shot examples (trusted, vendor-authored); User carries the fenced alert
 // data (untrusted, attacker-influencible through log lines and labels).
@@ -159,6 +163,21 @@ func renderAlert(b *strings.Builder, payload *pb.AlertPayload) {
 					b.WriteString(fmt.Sprintf("%-25s| %.4f\n", ts, p.Value))
 				}
 			}
+		}
+	}
+
+	if len(payload.Events) > 0 {
+		b.WriteString("\n--- Kubernetes Events ---\n")
+		events := payload.Events
+		// Safety cap: the collector already bounds events per payload, but the
+		// prompt must stay bounded even against a misbehaving collector.
+		if len(events) > maxPromptEvents {
+			events = events[:maxPromptEvents]
+		}
+		for _, ev := range events {
+			last := time.Unix(ev.LastTimestamp, 0).UTC().Format(time.RFC3339)
+			b.WriteString(fmt.Sprintf("[%s] %s on %s (x%d, last seen %s): %s\n",
+				ev.Type, ev.Reason, ev.InvolvedObjectName, ev.Count, last, ev.Message))
 		}
 	}
 

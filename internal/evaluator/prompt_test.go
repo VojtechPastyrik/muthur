@@ -64,6 +64,46 @@ func TestBuildPrompt_ContainsAllFields(t *testing.T) {
 	}
 }
 
+func TestBuildPrompt_RendersEvents(t *testing.T) {
+	payload := samplePayload()
+	payload.Events = []*pb.KubernetesEvent{
+		{
+			Type: "Warning", Reason: "FailedScheduling",
+			Message:            "0/3 nodes available: pod has unbound immediate PersistentVolumeClaims",
+			LastTimestamp:      1700000100,
+			Count:              4,
+			InvolvedObjectName: "app-123",
+		},
+	}
+	prompt := buildPrompt(payload, nil)
+
+	checks := []string{
+		"Kubernetes Events",
+		"FailedScheduling",
+		"unbound immediate PersistentVolumeClaims",
+		"x4",
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt.String(), check) {
+			t.Errorf("prompt missing: %q", check)
+		}
+	}
+}
+
+func TestBuildPrompt_EventsCapped(t *testing.T) {
+	payload := samplePayload()
+	for i := 0; i < maxPromptEvents+20; i++ {
+		payload.Events = append(payload.Events, &pb.KubernetesEvent{
+			Type: "Warning", Reason: "BackOff", Message: "back-off restarting",
+			InvolvedObjectName: "app-123", Count: 1,
+		})
+	}
+	prompt := buildPrompt(payload, nil)
+	if n := strings.Count(prompt.String(), "BackOff on app-123"); n != maxPromptEvents {
+		t.Errorf("rendered %d events, want cap %d", n, maxPromptEvents)
+	}
+}
+
 func TestBuildPrompt_EmptyPayload(t *testing.T) {
 	prompt := buildPrompt(&pb.AlertPayload{}, nil)
 	if !strings.Contains(prompt.String(),"report_analysis") {
