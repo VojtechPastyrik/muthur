@@ -4,6 +4,40 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-07-09
+
+### Added
+
+- **Kubernetes events in the analysis prompt.** `AlertPayload` gains
+  `repeated KubernetesEvent events = 19`; `renderAlert` renders a
+  `--- Kubernetes Events ---` section between metrics and pod
+  metadata, capped at 50 events regardless of what a collector sends.
+  Closes the biggest analysis blind spot: a pod stuck in `Pending`
+  has no logs and no container metrics — the reason
+  (`FailedScheduling`, `FailedMount`, unbound PVC,
+  `ImagePullBackOff`) exists only as events. Requires
+  muthur-collector `>=0.10.0` to actually populate the field; older
+  collectors keep working, the section is simply absent.
+
+### Fixed
+
+- **Duplicate resolved notifications.** AlertManager re-sends the
+  whole alert group on every group state change, so the same resolved
+  alert arrived (and was delivered) multiple times — up to 4
+  duplicate "alert has cleared" messages per episode were observed in
+  production. Resolved alerts now pass through their own dedup check,
+  keyed by cluster/alert/namespace/pod **plus `fired_at`**, so each
+  firing episode gets exactly one resolved notification while a new
+  episode of the same alert still resolves loudly. Uses the same
+  sliding window (`DEDUP_WINDOW_MINUTES`) and fails open on store
+  errors, like the firing-path dedup.
+
+### Changed
+
+- **Protobuf contract hash updated** (`proto/alert.proto.sha256`) for
+  the new `events` field — mirror in muthur-collector `0.10.0`;
+  release the pair together.
+
 ## [0.8.5] — 2026-06-29
 
 ### Added

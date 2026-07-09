@@ -49,7 +49,8 @@ flowchart TD
 - **File-mounted secrets** — sensitive values come from Kubernetes Secrets mounted as files, never env vars (safer against `/proc`, ps, crash dump leakage)
 - **Flexible routing** — first-match rules by severity, cluster_id, alert_name, namespace
 - **Per-cluster authentication** — each collector presents a client certificate signed by the vendor intermediate CA; muthur enforces `payload.cluster_id == cert.cluster_id` so a leaked cert can't impersonate another cluster
-- **Deduplication** — SHA256-keyed sliding window, configurable TTL
+- **Deduplication** — SHA256-keyed sliding window, configurable TTL. Resolved notifications dedupe too, keyed per firing episode (`fired_at` is part of the key) — AlertManager re-sends the whole group on every group state change, which otherwise produces repeated "alert cleared" messages
+- **Kubernetes events in the analysis prompt** — collectors (≥0.10.0) attach events for the alert target; the prompt renders them between metrics and pod metadata (capped at 50), so scheduling failures with no logs (`FailedScheduling`, unbound PVC, `ImagePullBackOff`) are visible to the LLM
 - **AlertManager silence integration** — Claude can request auto-silences for known transient alerts. Guarded: critical-severity alerts are *never* auto-silenced, and an optional alertname allowlist (`ALERTMANAGER_SILENCE_ALLOWLIST`) restricts what may be muted — defence against a prompt-injected log line steering a silence onto a real page
 - **LLM never blocks delivery** — each Claude call is bounded by `LLM_TIMEOUT`; on timeout/error the raw alert is delivered without enrichment instead of holding the page
 - **Trust calibration** — every analysis carries a `confidence` (high/medium/low) and `grounding` (stated vs inferred) signal, surfaced in notifications so on-call can tell a data-grounded root cause from a confident guess
