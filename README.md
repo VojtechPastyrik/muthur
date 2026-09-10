@@ -110,11 +110,14 @@ LLM_BASE_URL=http://localhost:11434/v1
 
 ### API surface
 
-The brain runs two listeners. The mTLS port (default 8080) serves the gRPC
-`monitoring.v1.Brain` service. The public HTTP port (default 8081) keeps the
-browser-facing endpoints. TLS on the gRPC port is `VerifyClientCertIfGiven`
-so `BootstrapCert` can run cert-less; every other RPC requires a verified
-client cert signed by the vendor intermediate CA.
+The brain runs up to three listeners. The mTLS port (default 8080) serves the
+gRPC `monitoring.v1.Brain` service. The signed port (default 8082, enabled by
+`AUTH_MODES=mtls,signed`) serves the same service over plain HTTP for
+collectors behind Cloudflare or any other TLS-terminating edge. The public
+HTTP port (default 8081) keeps the browser-facing endpoints. TLS on the gRPC
+port is `VerifyClientCertIfGiven` so `BootstrapCert` can run cert-less; every
+other RPC requires a verified client cert signed by the vendor intermediate
+CA.
 
 **gRPC service** (`monitoring.v1.Brain`, mTLS port):
 
@@ -132,6 +135,15 @@ without waiting for the leaf to expire.
 
 Reflection is registered, so operators can introspect the service in
 production with `grpcurl -insecure muthur-api:443 list`.
+
+**Signed transport** (signed port, see [docs/signed-transport.md](docs/signed-transport.md)):
+
+| Method | Path                   | Auth                                      | Purpose                                   |
+|--------|------------------------|-------------------------------------------|-------------------------------------------|
+| GET    | `/muthur/v1/keys`      | none (payload signed by the intermediate) | Brain HPKE public keys for sealing.       |
+| POST   | `/muthur/v1/bootstrap` | bootstrap token inside the sealed body    | Same as `BootstrapCert`.                  |
+| POST   | `/muthur/v1/ingest`    | request signature + replay + revocation   | Same as `Ingest`; body HPKE-sealed.       |
+| POST   | `/muthur/v1/sign-csr`  | request signature + replay + revocation   | Same as `SignCSR`; body HPKE-sealed.      |
 
 **HTTP endpoints** (public HTTP port):
 
@@ -179,8 +191,11 @@ Beyond the existing settings, the new features add:
 | `INCIDENT_TTL` | `720h` | How long incident records are kept |
 | `NOTIFY_EVIDENCE_ENABLED` | `true` | Attach redacted log tail + key metrics to notifications |
 | `NOTIFY_LOG_LINES` | `8` | Max redacted log lines shown as evidence |
-| `TLS_SERVER_CERT_FILE` | _(required)_ | Server cert path. Cert is hot-reloaded by file mtime. |
-| `TLS_SERVER_KEY_FILE` | _(required)_ | Server key path. |
+| `AUTH_MODES` | `mtls` | Comma list of collector transports to serve: `mtls` (gRPC, passthrough ingress) and/or `signed` (HTTP behind a TLS-terminating edge). |
+| `SIGNED_PORT` | `8082` | Listener for the signed transport. |
+| `HPKE_KEY_FILE` | _(required for `signed`)_ | X25519 key(s), PKCS#8 PEM, first block advertised. Generate with `muthur hpke-keygen`. |
+| `TLS_SERVER_CERT_FILE` | _(required for `mtls`)_ | Server cert path. Cert is hot-reloaded by file mtime. |
+| `TLS_SERVER_KEY_FILE` | _(required for `mtls`)_ | Server key path. |
 | `TLS_TRUST_ROOT_FILE` | _(required)_ | Vendor root CA path. Brain verifies collector client certs against this anchor. |
 | `INTERMEDIATE_CA_FILE` | _(required)_ | Intermediate CA cert path used to sign collector CSRs. |
 | `INTERMEDIATE_KEY_FILE` | _(required)_ | Intermediate CA private key path. |

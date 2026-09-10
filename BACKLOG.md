@@ -104,6 +104,11 @@ Everything else is deferred until Tier 1 ships. Resist scope creep.
   tenant data lives in same namespace; tech-debt entry below)
 - 🚫 Migration: dual-accept (token+mTLS) — dropped; deployed as a hard
   cut at v0.7.0
+- ✅ Signed transport (v0.10.0): `AUTH_MODES=signed` serves the same
+  Brain service over HTTP behind any TLS-terminating edge — per-request
+  signature with the collector leaf + HPKE-sealed body. Removes the
+  passthrough-ingress requirement without giving up the PKI. Additive;
+  mTLS stays the default. See `docs/signed-transport.md`.
 
 ## EPIC 3 — Agentic pull — ❌
 - ❌ LLM loop: model can request more logs/metrics mid-analysis
