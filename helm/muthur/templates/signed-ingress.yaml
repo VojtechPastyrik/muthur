@@ -1,0 +1,33 @@
+{{- if and (has "signed" .Values.auth.modes) .Values.signed.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "muthur.fullname" . }}-signed
+  labels:
+    {{- include "muthur.labels" . | nindent 4 }}
+  {{- with .Values.signed.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.signed.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.signed.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.signed.ingress.host }}
+      secretName: {{ .Values.signed.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.signed.ingress.host }}
+      http:
+        paths:
+          - path: /muthur/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "muthur.fullname" . }}
+                port:
+                  name: http-signed
+{{- end }}

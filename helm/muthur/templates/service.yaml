@@ -22,5 +22,13 @@ spec:
       targetPort: http-public
       protocol: TCP
       name: http
+    {{- if has "signed" .Values.auth.modes }}
+    # Signed-transport port — collectors with auth.mode=signed. Fronted by a
+    # TLS-terminating ingress; the request itself carries auth + encryption.
+    - port: {{ .Values.service.signedPort }}
+      targetPort: http-signed
+      protocol: TCP
+      name: http-signed
+    {{- end }}
   selector:
     {{- include "muthur.selectorLabels" . | nindent 4 }}

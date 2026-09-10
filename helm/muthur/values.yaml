@@ -12,6 +12,40 @@ service:
   # Plain-HTTP port — /feedback, /metrics, /healthz. Public ingress points
   # here and terminates TLS with a browser-trusted cert.
   publicPort: 8081
+  # Signed-transport port — collectors running auth.mode=signed. Plain HTTP
+  # inside the cluster; any TLS-terminating ingress can front it because
+  # authenticity and confidentiality live in the request, not the handshake.
+  signedPort: 8082
+
+# --- Auth modes ---
+# Which collector transports the brain serves. "mtls" is the gRPC listener on
+# service.port (ingress MUST pass TLS through). "signed" is the HTTP listener
+# on service.signedPort for collectors behind Cloudflare, a cloud LB or any
+# edge that terminates TLS: requests are signed with the collector cert and
+# HPKE-sealed to the brain's key, so the edge sees ciphertext only. Both can
+# run at once; a collector picks one via its own auth.mode.
+auth:
+  modes:
+    - mtls
+
+# --- Signed transport ---
+signed:
+  # X25519 decapsulation key(s), PKCS#8 PEM, one or more blocks; the first is
+  # advertised, older ones stay accepted for rotation. Generate with
+  #   docker run --rm ghcr.io/vojtechpastyrik/muthur:<tag> hpke-keygen
+  # and store as key `hpke.pem` in the Secret named below (ExternalSecrets,
+  # SOPS, kubectl create secret — the chart never generates it).
+  hpkeKeySecretName: muthur-hpke
+  # Standard Ingress in front of the signed port. TLS terminates at the
+  # ingress (or at Cloudflare in front of it); no passthrough needed.
+  ingress:
+    enabled: false
+    className: traefik
+    host: muthur-api.yourdomain.com
+    tls:
+      enabled: true
+      secretName: muthur-signed-tls
+    annotations: {}
 
 # Prometheus Operator ServiceMonitor for the /metrics endpoint. Enable when
 # kube-prometheus-stack (or any Prometheus Operator) is present.

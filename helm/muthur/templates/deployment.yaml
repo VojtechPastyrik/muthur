@@ -43,6 +43,11 @@ spec:
             - name: http-public
               containerPort: 8081
               protocol: TCP
+            {{- if has "signed" .Values.auth.modes }}
+            - name: http-signed
+              containerPort: 8082
+              protocol: TCP
+            {{- end }}
           # Probes go to the plain-HTTP listener so the kubelet (which has no
           # client cert) doesn't have to wrestle with the mTLS handshake.
           livenessProbe:
@@ -62,6 +67,14 @@ spec:
               value: "8080"
             - name: PUBLIC_PORT
               value: "8081"
+            - name: AUTH_MODES
+              value: {{ join "," .Values.auth.modes | quote }}
+            {{- if has "signed" .Values.auth.modes }}
+            - name: SIGNED_PORT
+              value: "8082"
+            - name: HPKE_KEY_FILE
+              value: /secrets/hpke/hpke.pem
+            {{- end }}
             - name: LOG_LEVEL
               value: {{ .Values.config.logLevel | quote }}
             - name: ANTHROPIC_MODEL
@@ -194,6 +207,11 @@ spec:
             - name: tls-intermediate
               mountPath: /secrets/tls/intermediate
               readOnly: true
+            {{- if has "signed" .Values.auth.modes }}
+            - name: hpke-key
+              mountPath: /secrets/hpke
+              readOnly: true
+            {{- end }}
             {{- if .Values.config.llm.apiKeySecretKey }}
             - name: llm-secret
               mountPath: /secrets/llm
@@ -225,6 +243,12 @@ spec:
           secret:
             secretName: {{ .Values.ca.intermediate.secretName }}
             defaultMode: 0400
+        {{- if has "signed" .Values.auth.modes }}
+        - name: hpke-key
+          secret:
+            secretName: {{ .Values.signed.hpkeKeySecretName }}
+            defaultMode: 0400
+        {{- end }}
         {{- if .Values.config.llm.apiKeySecretKey }}
         - name: llm-secret
           secret:
