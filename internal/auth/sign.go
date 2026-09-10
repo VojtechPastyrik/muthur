@@ -185,3 +185,13 @@ func randomSerial() (*big.Int, error) {
 	limit := new(big.Int).Lsh(big.NewInt(1), 159)
 	return rand.Int(rand.Reader, limit)
 }
+
+// CACert returns the intermediate certificate the signer issues from.
+func (s *Signer) CACert() *x509.Certificate { return s.caCert }
+
+// SignPayload signs arbitrary bytes with the intermediate key. The signed
+// transport uses it to vouch for the brain's HPKE public keys so a collector
+// can verify them against the vendor CA instead of trusting first use.
+func (s *Signer) SignPayload(payload []byte) ([]byte, error) {
+	return SignPayload(s.caKey, payload)
+}

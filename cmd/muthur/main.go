@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -34,12 +35,20 @@ import (
 	"github.com/VojtechPastyrik/muthur/internal/notify"
 	"github.com/VojtechPastyrik/muthur/internal/pipeline"
 	"github.com/VojtechPastyrik/muthur/internal/routing"
+	"github.com/VojtechPastyrik/muthur/internal/signedsrv"
 	"github.com/VojtechPastyrik/muthur/internal/silence"
 	"github.com/VojtechPastyrik/muthur/internal/store"
 	pb "github.com/VojtechPastyrik/muthur/proto"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "hpke-keygen" {
+		if err := hpkeKeygen(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -182,14 +191,19 @@ func run() error {
 	// mTLS plumbing. The server config does double duty: it terminates client
 	// TLS (verifying collector certs against the vendor trust root) and
 	// presents brain's own server cert (hot-reloaded by cert-manager).
-	tlsCfg, err := auth.LoadServerTLS(auth.ServerTLSConfig{
-		CertFile:           cfg.TLSServerCertFile,
-		KeyFile:            cfg.TLSServerKeyFile,
-		TrustRootFile:      cfg.TLSTrustRootFile,
-		IntermediateCAFile: cfg.IntermediateCAFile,
-	})
-	if err != nil {
-		return fmt.Errorf("load server TLS: %w", err)
+	mtlsEnabled := cfg.AuthModeEnabled(config.AuthModeMTLS)
+	signedEnabled := cfg.AuthModeEnabled(config.AuthModeSigned)
+	var tlsCfg *tls.Config
+	if mtlsEnabled {
+		tlsCfg, err = auth.LoadServerTLS(auth.ServerTLSConfig{
+			CertFile:           cfg.TLSServerCertFile,
+			KeyFile:            cfg.TLSServerKeyFile,
+			TrustRootFile:      cfg.TLSTrustRootFile,
+			IntermediateCAFile: cfg.IntermediateCAFile,
+		})
+		if err != nil {
+			return fmt.Errorf("load server TLS: %w", err)
+		}
 	}
 
 	// Replay guard backed by the shared store, so nonce uniqueness holds
@@ -226,18 +240,52 @@ func run() error {
 	// as unary interceptors; BootstrapCert is exempt from both because the
 	// caller has no cert yet and the bootstrap token's single-use guarantee
 	// replaces the nonce check.
-	grpcSrv := grpc.NewServer(
-		grpc.Creds(credentials.NewTLS(tlsCfg)),
-		grpc.ChainUnaryInterceptor(
-			grpcsrv.AuthInterceptor(logger),
-			grpcsrv.RevocationInterceptor(tenantsReloader, logger),
-			grpcsrv.ReplayInterceptor(replayGuard, logger),
-		),
-	)
-	pb.RegisterBrainServer(grpcSrv, grpcsrv.New(bootstrapH, renewH, ingestH, logger))
-	// Reflection lets operators poke the API with grpcurl in production; it
-	// only exposes the schema, which we already publish in the proto repo.
-	reflection.Register(grpcSrv)
+	brain := grpcsrv.New(bootstrapH, renewH, ingestH, logger)
+	var grpcSrv *grpc.Server
+	if mtlsEnabled {
+		grpcSrv = grpc.NewServer(
+			grpc.Creds(credentials.NewTLS(tlsCfg)),
+			grpc.ChainUnaryInterceptor(
+				grpcsrv.AuthInterceptor(logger),
+				grpcsrv.RevocationInterceptor(tenantsReloader, logger),
+				grpcsrv.ReplayInterceptor(replayGuard, logger),
+			),
+		)
+		pb.RegisterBrainServer(grpcSrv, brain)
+		// Reflection lets operators poke the API with grpcurl in production; it
+		// only exposes the schema, which we already publish in the proto repo.
+		reflection.Register(grpcSrv)
+	}
+
+	// --- Signed HTTP server (port 8082) ---
+	// Same Brain service for collectors behind a TLS-terminating edge. TLS is
+	// somebody else's (Cloudflare, a cloud LB); authenticity comes from the
+	// per-request signature and confidentiality from the HPKE envelope.
+	var signedSrv *http.Server
+	if signedEnabled {
+		keys, err := auth.LoadHPKEKeys(cfg.HPKEKeyFile)
+		if err != nil {
+			return fmt.Errorf("load HPKE keys: %w", err)
+		}
+		trust, err := auth.LoadTrustPools(cfg.TLSTrustRootFile, cfg.IntermediateCAFile)
+		if err != nil {
+			return fmt.Errorf("load trust pools: %w", err)
+		}
+		signedSrv = &http.Server{
+			Addr: fmt.Sprintf(":%s", cfg.SignedPort),
+			Handler: signedsrv.New(signedsrv.Deps{
+				Brain:   brain,
+				Tenants: tenantsReloader,
+				Replay:  replayGuard,
+				Keys:    keys,
+				Trust:   trust,
+				Signer:  signer,
+				Logger:  logger,
+			}),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		logger.Info("signed transport enabled", zap.Int("hpke_keys", len(keys.Public())))
+	}
 
 	// --- Public HTTP listener (port 8081) ---
 	// Plain HTTP for the browser-facing /feedback link emitted into
@@ -260,21 +308,27 @@ func run() error {
 	publicAddr := fmt.Sprintf(":%s", cfg.PublicPort)
 	publicSrv := &http.Server{Addr: publicAddr, Handler: publicRouter}
 
-	grpcLn, err := net.Listen("tcp", grpcAddr)
-	if err != nil {
-		return fmt.Errorf("listen gRPC: %w", err)
-	}
-
-	// Listen in the background so the main goroutine can wait for a shutdown
-	// signal and drain in-flight work. Both listeners report through the
-	// same serveErr channel — the first failure exits the process.
-	serveErr := make(chan error, 2)
-	go func() {
-		logger.Info("starting muthur (gRPC mTLS)", zap.String("addr", grpcAddr))
-		if err := grpcSrv.Serve(grpcLn); err != nil {
-			serveErr <- err
+	serveErr := make(chan error, 3)
+	if grpcSrv != nil {
+		grpcLn, err := net.Listen("tcp", grpcAddr)
+		if err != nil {
+			return fmt.Errorf("listen gRPC: %w", err)
 		}
-	}()
+		go func() {
+			logger.Info("starting muthur (gRPC mTLS)", zap.String("addr", grpcAddr))
+			if err := grpcSrv.Serve(grpcLn); err != nil {
+				serveErr <- err
+			}
+		}()
+	}
+	if signedSrv != nil {
+		go func() {
+			logger.Info("starting muthur (signed HTTP)", zap.String("addr", signedSrv.Addr))
+			if err := signedSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				serveErr <- err
+			}
+		}()
+	}
 	go func() {
 		logger.Info("starting muthur (public)", zap.String("addr", publicAddr))
 		if err := publicSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -298,15 +352,20 @@ func run() error {
 	// Stop accepting new requests on BOTH listeners, flush buffered incidents,
 	// then wait for in-flight processing to drain.
 	_ = publicSrv.Shutdown(shCtx)
-	stoppedGRPC := make(chan struct{})
-	go func() {
-		grpcSrv.GracefulStop()
-		close(stoppedGRPC)
-	}()
-	select {
-	case <-stoppedGRPC:
-	case <-shCtx.Done():
-		grpcSrv.Stop()
+	if signedSrv != nil {
+		_ = signedSrv.Shutdown(shCtx)
+	}
+	if grpcSrv != nil {
+		stoppedGRPC := make(chan struct{})
+		go func() {
+			grpcSrv.GracefulStop()
+			close(stoppedGRPC)
+		}()
+		select {
+		case <-stoppedGRPC:
+		case <-shCtx.Done():
+			grpcSrv.Stop()
+		}
 	}
 	pipe.Drain()
 
@@ -347,4 +406,16 @@ func newLogger(level string) (*zap.Logger, error) {
 	cfg.EncoderConfig.TimeKey = "ts"
 	cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 	return cfg.Build()
+}
+
+// hpkeKeygen prints a fresh X25519 key in the PEM format HPKE_KEY_FILE
+// expects. Operators run it once per brain and store the output as a Secret;
+// prepend a new key to the file to rotate (older keys stay accepted).
+func hpkeKeygen() error {
+	pemBytes, err := auth.GenerateHPKEKeyPEM()
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.Write(pemBytes)
+	return err
 }

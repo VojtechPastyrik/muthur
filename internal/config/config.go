@@ -34,6 +34,18 @@ type Config struct {
 	TLSServerKeyFile  string
 	TLSTrustRootFile  string
 
+	// AuthModes lists the enabled collector transports: "mtls" (gRPC, the
+	// brain terminates TLS) and/or "signed" (HTTP behind any TLS-terminating
+	// edge; requests are signed with the collector cert and HPKE-sealed).
+	AuthModes []string
+
+	// SignedPort is the listener for the signed transport.
+	SignedPort string
+
+	// HPKEKeyFile holds the brain's X25519 decapsulation key(s) for the
+	// signed transport (PKCS#8 PEM, first block is the advertised key).
+	HPKEKeyFile string
+
 	// IntermediateCAFile + IntermediateKeyFile are the keypair brain uses
 	// to sign collector CSRs (/sign-csr and /bootstrap-cert). They MUST chain
 	// to TrustRootFile, so collectors that are issued a cert under this
@@ -219,6 +231,11 @@ func Load() (*Config, error) {
 		replayWindow = 5 * time.Minute
 	}
 
+	authModes, err := parseAuthModes(envOr("AUTH_MODES", "mtls"))
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		Port:                     envOr("PORT", "8080"),
 		PublicPort:               envOr("PUBLIC_PORT", "8081"),
@@ -226,6 +243,9 @@ func Load() (*Config, error) {
 		TLSServerCertFile:        os.Getenv("TLS_SERVER_CERT_FILE"),
 		TLSServerKeyFile:         os.Getenv("TLS_SERVER_KEY_FILE"),
 		TLSTrustRootFile:         os.Getenv("TLS_TRUST_ROOT_FILE"),
+		AuthModes:                authModes,
+		SignedPort:               envOr("SIGNED_PORT", "8082"),
+		HPKEKeyFile:              os.Getenv("HPKE_KEY_FILE"),
 		IntermediateCAFile:       os.Getenv("INTERMEDIATE_CA_FILE"),
 		IntermediateKeyFile:      os.Getenv("INTERMEDIATE_KEY_FILE"),
 		ReplayWindow:             replayWindow,
@@ -293,11 +313,17 @@ func Load() (*Config, error) {
 
 	// mTLS is mandatory in v0.7. All five files must be configured; cert-manager
 	// in the brain's namespace mounts them via the chart's Secret references.
-	if cfg.TLSServerCertFile == "" || cfg.TLSServerKeyFile == "" || cfg.TLSTrustRootFile == "" {
-		return nil, fmt.Errorf("TLS_SERVER_CERT_FILE, TLS_SERVER_KEY_FILE and TLS_TRUST_ROOT_FILE are required for mTLS")
+	if cfg.TLSTrustRootFile == "" {
+		return nil, fmt.Errorf("TLS_TRUST_ROOT_FILE is required to verify collector certs")
 	}
 	if cfg.IntermediateCAFile == "" || cfg.IntermediateKeyFile == "" {
 		return nil, fmt.Errorf("INTERMEDIATE_CA_FILE and INTERMEDIATE_KEY_FILE are required to sign collector CSRs")
+	}
+	if cfg.AuthModeEnabled(AuthModeMTLS) && (cfg.TLSServerCertFile == "" || cfg.TLSServerKeyFile == "") {
+		return nil, fmt.Errorf("TLS_SERVER_CERT_FILE and TLS_SERVER_KEY_FILE are required for the mtls auth mode")
+	}
+	if cfg.AuthModeEnabled(AuthModeSigned) && cfg.HPKEKeyFile == "" {
+		return nil, fmt.Errorf("HPKE_KEY_FILE is required for the signed auth mode")
 	}
 
 	return cfg, nil
@@ -338,4 +364,40 @@ func boolEnv(key string, fallback bool) bool {
 		return fallback
 	}
 	return b
+}
+
+// Auth mode names accepted in AUTH_MODES.
+const (
+	AuthModeMTLS   = "mtls"
+	AuthModeSigned = "signed"
+)
+
+// AuthModeEnabled reports whether mode is in AuthModes.
+func (c *Config) AuthModeEnabled(mode string) bool {
+	for _, m := range c.AuthModes {
+		if m == mode {
+			return true
+		}
+	}
+	return false
+}
+
+func parseAuthModes(raw string) ([]string, error) {
+	var modes []string
+	for _, m := range strings.Split(raw, ",") {
+		m = strings.ToLower(strings.TrimSpace(m))
+		if m == "" {
+			continue
+		}
+		switch m {
+		case AuthModeMTLS, AuthModeSigned:
+		default:
+			return nil, fmt.Errorf("unknown auth mode %q in AUTH_MODES (want mtls and/or signed)", m)
+		}
+		modes = append(modes, m)
+	}
+	if len(modes) == 0 {
+		return nil, fmt.Errorf("AUTH_MODES must enable at least one of mtls, signed")
+	}
+	return modes, nil
 }

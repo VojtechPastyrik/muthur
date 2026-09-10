@@ -173,3 +173,60 @@ func TestLoad_ReplayWindowDefault(t *testing.T) {
 		t.Errorf("replay window = %s, want 5m0s default", cfg.ReplayWindow)
 	}
 }
+
+func TestLoad_AuthModesDefaultMTLS(t *testing.T) {
+	clearLLMEnv(t)
+	setupTLS(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.AuthModeEnabled(AuthModeMTLS) || cfg.AuthModeEnabled(AuthModeSigned) {
+		t.Fatalf("modes %v", cfg.AuthModes)
+	}
+	if cfg.SignedPort != "8082" {
+		t.Fatalf("signed port %q", cfg.SignedPort)
+	}
+}
+
+func TestLoad_SignedModeRequiresHPKEKey(t *testing.T) {
+	clearLLMEnv(t)
+	setupTLS(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk")
+	t.Setenv("AUTH_MODES", "mtls,signed")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected HPKE_KEY_FILE error")
+	}
+	t.Setenv("HPKE_KEY_FILE", "/secrets/hpke/hpke.pem")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.AuthModeEnabled(AuthModeSigned) || !cfg.AuthModeEnabled(AuthModeMTLS) {
+		t.Fatalf("modes %v", cfg.AuthModes)
+	}
+}
+
+func TestLoad_SignedOnlySkipsServerCert(t *testing.T) {
+	clearLLMEnv(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk")
+	t.Setenv("TLS_TRUST_ROOT_FILE", "/tls/root.crt")
+	t.Setenv("INTERMEDIATE_CA_FILE", "/tls/intermediate.crt")
+	t.Setenv("INTERMEDIATE_KEY_FILE", "/tls/intermediate.key")
+	t.Setenv("AUTH_MODES", "signed")
+	t.Setenv("HPKE_KEY_FILE", "/secrets/hpke/hpke.pem")
+	if _, err := Load(); err != nil {
+		t.Fatalf("signed-only should not need a server cert: %v", err)
+	}
+}
+
+func TestLoad_RejectsUnknownAuthMode(t *testing.T) {
+	clearLLMEnv(t)
+	setupTLS(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk")
+	t.Setenv("AUTH_MODES", "token")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error")
+	}
+}
