@@ -4,6 +4,33 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] — 2026-09-10
+
+### Added
+
+- **Signed transport (`AUTH_MODES=signed`).** A second collector
+  transport that works through any TLS-terminating edge — Cloudflare
+  Tunnel, cloud load balancers, plain `Ingress`. Collectors sign every
+  request with their leaf certificate key (RFC 9421 subset, ECDSA
+  P-256) and HPKE-seal the protobuf body to the brain's X25519 key
+  (RFC 9180, stdlib `crypto/hpke`), so the edge sees ciphertext only.
+  Identity, revocation, replay protection and the bootstrap/renew
+  flows are the ones the mTLS path already uses; `internal/signedsrv`
+  is an HTTP shim over the same handlers. Listener on `SIGNED_PORT`
+  (default 8082); chart values `auth.modes`, `signed.*`,
+  `service.signedPort`, `signed.ingress`. Design and wire format in
+  `docs/signed-transport.md`.
+- **`muthur hpke-keygen`** subcommand prints a fresh HPKE key in the
+  PEM format `HPKE_KEY_FILE` expects; prepend a key to rotate.
+
+### Changed
+
+- `TLS_SERVER_CERT_FILE` / `TLS_SERVER_KEY_FILE` are only required
+  when `mtls` is in `AUTH_MODES`. The trust root and intermediate CA
+  files stay required in every mode.
+- Pairs with muthur-collector `0.11.0` (`auth.mode: signed`). The
+  protobuf contract is unchanged; mTLS deployments need no action.
+
 ## [0.9.0] — 2026-07-09
 
 ### Added
