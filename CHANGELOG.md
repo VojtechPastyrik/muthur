@@ -4,6 +4,54 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] — 2026-10-13
+
+### Added
+
+- **Fleet watchdog (`config.watchdogEnabled`, default on).** Collectors
+  report liveness over a new `Heartbeat` RPC; the brain records each
+  cluster's last-seen timestamp and notifies when the beats stop. This
+  is the one check that cannot live in the monitored cluster — a rule
+  there dies together with the cluster it was watching, and silence is
+  otherwise indistinguishable from a quiet night.
+  A collector outage renders as a synthetic `MuthurCollectorDown` alert
+  through the existing router and notifiers, so it reaches the same
+  receivers as everything else, followed by a resolved notification on
+  recovery. One notification per transition, never one per tick.
+- **Deliberate decommissioning.** The roster shrinks through three
+  independent paths so a torn-down cluster stops paging: the tenant is
+  revoked or removed from the tenants file (purged on the next scan),
+  the collector sends a final `shutting_down` beat, or the heartbeat
+  record ages out after `config.fleetRosterTtl`. Retired clusters have
+  their metric series deleted rather than pinned at 0, so they vanish
+  from dashboards instead of sitting there red forever.
+- **Alerting-path probe.** Collectors that receive the cluster's `Watchdog`
+  alert (see `/pipeline-ok` in muthur-collector) report it in the
+  heartbeat, letting the brain tell a dead collector from a healthy
+  collector whose cluster has stopped delivering alerts — a crashed
+  Prometheus, a stopped AlertManager, a bad route. The latter is the
+  worse failure and was previously invisible: everything looks fine and
+  alerts are silently lost. Raised as `MuthurAlertingPipelineDown`,
+  threshold `config.watchdogPipelineStale` (default 10m). A cluster that
+  never routes Watchdog reports 0 and is never alerted on.
+- Metrics `muthur_collector_up`, `muthur_collector_last_seen_seconds`
+  `muthur_collector_pipeline_last_seen_seconds` and
+  `muthur_collector_heartbeats_total`, all labelled by `cluster_id`,
+  so staleness can also be alerted on in an external Prometheus without
+  depending on the brain's own notifier path.
+- `Heartbeat` is served on both transports — the gRPC Brain service and
+  the signed HTTP route `/muthur/v1/heartbeat` — under the same auth,
+  revocation and replay guarantees as `Ingest`.
+
+### Changed
+
+- The Grafana Explore deep link uses the datasource name the collector
+  reports (`grafana_logs_datasource`) instead of a hardcoded `Loki`,
+  so a fleet can mix Loki and VictoriaLogs clusters. Collectors that do
+  not send one keep the previous behaviour.
+- Protobuf contract changed (`grafana_logs_datasource` on AlertPayload,
+  `Heartbeat` RPC). Deploy the brain before muthur-collector `0.12.0`.
+
 ## [0.10.0] — 2026-09-10
 
 ### Added
