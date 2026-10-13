@@ -27,6 +27,7 @@ import (
 	"github.com/VojtechPastyrik/muthur/internal/embed"
 	"github.com/VojtechPastyrik/muthur/internal/evaluator"
 	"github.com/VojtechPastyrik/muthur/internal/feedback"
+	"github.com/VojtechPastyrik/muthur/internal/fleet"
 	"github.com/VojtechPastyrik/muthur/internal/grpcsrv"
 	"github.com/VojtechPastyrik/muthur/internal/history"
 	"github.com/VojtechPastyrik/muthur/internal/ingest"
@@ -235,12 +236,28 @@ func run() error {
 
 	ingestH := ingest.NewHandler(pipe, logger)
 
+	// Fleet liveness. The tracker records heartbeats on the collector's
+	// request path; the watchdog scans the roster and routes a synthetic alert
+	// through the normal notifier path when beats stop. Heartbeats are always
+	// recorded (they feed muthur_collector_* metrics); only the notifications
+	// are gated by WATCHDOG_ENABLED.
+	fleetTracker := fleet.NewTracker(st, cfg.FleetRosterTTL, logger)
+	watchdog := fleet.NewWatchdog(st, tenantsReloader, pipe.NotifyFleet, fleet.WatchdogConfig{
+		Enabled:         cfg.WatchdogEnabled,
+		Interval:        cfg.WatchdogInterval,
+		StaleMultiplier: cfg.WatchdogStaleMultiplier,
+		StaleFloor:      cfg.WatchdogStaleFloor,
+		PipelineStale:   cfg.WatchdogPipelineStale,
+	}, logger)
+	watchdog.Start()
+	defer watchdog.Stop()
+
 	// --- gRPC mTLS server (port 8080) ---
 	// Collectors talk to the brain over the Brain service. Auth + replay run
 	// as unary interceptors; BootstrapCert is exempt from both because the
 	// caller has no cert yet and the bootstrap token's single-use guarantee
 	// replaces the nonce check.
-	brain := grpcsrv.New(bootstrapH, renewH, ingestH, logger)
+	brain := grpcsrv.New(bootstrapH, renewH, ingestH, fleetTracker, logger)
 	var grpcSrv *grpc.Server
 	if mtlsEnabled {
 		grpcSrv = grpc.NewServer(
