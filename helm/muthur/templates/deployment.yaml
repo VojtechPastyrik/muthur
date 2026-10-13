@@ -149,6 +149,18 @@ spec:
               value: {{ .Values.config.correlationWindowSeconds | quote }}
             - name: CORRELATION_MAX_GROUP
               value: {{ .Values.config.correlationMaxGroup | quote }}
+            - name: WATCHDOG_ENABLED
+              value: {{ .Values.config.watchdogEnabled | quote }}
+            - name: WATCHDOG_INTERVAL
+              value: {{ .Values.config.watchdogInterval | quote }}
+            - name: WATCHDOG_STALE_MULTIPLIER
+              value: {{ .Values.config.watchdogStaleMultiplier | quote }}
+            - name: WATCHDOG_STALE_FLOOR
+              value: {{ .Values.config.watchdogStaleFloor | quote }}
+            - name: WATCHDOG_PIPELINE_STALE
+              value: {{ .Values.config.watchdogPipelineStale | quote }}
+            - name: FLEET_ROSTER_TTL
+              value: {{ .Values.config.fleetRosterTtl | quote }}
             - name: FEEDBACK_FEW_SHOT
               value: {{ .Values.config.feedbackFewShot | quote }}
             {{- /*
