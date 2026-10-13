@@ -9,6 +9,7 @@ import (
 	"github.com/VojtechPastyrik/muthur/internal/dedup"
 	"github.com/VojtechPastyrik/muthur/internal/evaluator"
 	"github.com/VojtechPastyrik/muthur/internal/feedback"
+	"github.com/VojtechPastyrik/muthur/internal/fleet"
 	"github.com/VojtechPastyrik/muthur/internal/history"
 	"github.com/VojtechPastyrik/muthur/internal/incident"
 	"github.com/VojtechPastyrik/muthur/internal/llmcache"
@@ -173,6 +174,18 @@ func (p *Pipeline) processIncident(alerts []*pb.AlertPayload) {
 		zap.String("cluster_id", rep.ClusterId),
 		zap.Int("alerts", len(alerts)),
 	)
+}
+
+// NotifyFleet delivers a collector-liveness transition from the watchdog. It
+// deliberately bypasses dedup, correlation, and the LLM: the watchdog already
+// emits one event per transition, there is nothing to correlate a missing
+// collector with, and no analysis can be produced from the absence of data.
+func (p *Pipeline) NotifyFleet(ev fleet.Event) {
+	payload := fleet.SyntheticAlert(ev, time.Now())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	msg := notify.FormatMessage(payload, nil)
+	p.deliver(ctx, payload, msg)
 }
 
 func (p *Pipeline) processResolved(payload *pb.AlertPayload) {
