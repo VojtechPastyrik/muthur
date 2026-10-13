@@ -337,6 +337,31 @@ config:
   correlationWindowSeconds: 30
   correlationMaxGroup: 25
 
+  # --- Fleet watchdog ---
+  # Collectors beat to the brain on their own interval; the watchdog scans the
+  # roster and notifies when one goes silent. This is the only component that
+  # can notice a whole cluster dying — a rule inside that cluster dies with it.
+  #
+  # Heartbeats are always recorded and exported as muthur_collector_* metrics;
+  # watchdogEnabled gates only the notifications.
+  watchdogEnabled: true
+  watchdogInterval: 30s
+  # Staleness threshold = the collector's reported beat interval x multiplier,
+  # never less than watchdogStaleFloor. 3x tolerates two missed beats.
+  watchdogStaleMultiplier: "3"
+  watchdogStaleFloor: 2m
+  # How long a cluster's own alerting path may go without delivering a
+  # Watchdog alert before muthur reports it broken. Only applies to clusters
+  # whose collector actually receives one (see /pipeline-ok in the collector
+  # README) — a cluster that never routed Watchdog is never alerted on.
+  # Fixed rather than derived: the cadence is AlertManager's repeat_interval,
+  # which the collector cannot see. The default tolerates 5m plus jitter.
+  watchdogPipelineStale: 10m
+  # How long a heartbeat record survives without a refresh. The backstop
+  # against a roster that only grows: a cluster torn down without being
+  # revoked in the tenants list leaves on its own instead of paging forever.
+  fleetRosterTtl: 168h
+
   # --- Feedback loop ---
   # Number of recent operator verdicts replayed into the prompt as few-shot.
   feedbackFewShot: 3

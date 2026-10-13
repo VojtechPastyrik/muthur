@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/VojtechPastyrik/muthur/internal/auth"
+	"github.com/VojtechPastyrik/muthur/internal/fleet"
 	"github.com/VojtechPastyrik/muthur/internal/ingest"
 	pb "github.com/VojtechPastyrik/muthur/proto"
 )
@@ -26,19 +27,41 @@ type Server struct {
 	bootstrap *auth.BootstrapHandler
 	renew     *auth.RenewHandler
 	ingest    *ingest.Handler
+	fleet     *fleet.Tracker
 	logger    *zap.Logger
 }
 
-// New wires the server. All four dependencies must be non-nil; the auth +
-// replay interceptors that gate Ingest and SignCSR are configured separately
-// in cmd/muthur.
-func New(bootstrap *auth.BootstrapHandler, renew *auth.RenewHandler, ing *ingest.Handler, logger *zap.Logger) *Server {
+// New wires the server. All dependencies must be non-nil; the auth + replay
+// interceptors that gate Ingest, SignCSR and Heartbeat are configured
+// separately in cmd/muthur.
+func New(bootstrap *auth.BootstrapHandler, renew *auth.RenewHandler, ing *ingest.Handler, tracker *fleet.Tracker, logger *zap.Logger) *Server {
 	return &Server{
 		bootstrap: bootstrap,
 		renew:     renew,
 		ingest:    ing,
+		fleet:     tracker,
 		logger:    logger,
 	}
+}
+
+// Heartbeat records a collector liveness beat. The cluster identity comes from
+// the verified client certificate, never the request body.
+func (s *Server) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*pb.HeartbeatResponse, error) {
+	id, ok := auth.FromContext(ctx)
+	if !ok || id == nil {
+		return nil, status.Error(codes.Unauthenticated, fleet.ErrNoIdentity.Error())
+	}
+	if err := s.fleet.Record(ctx, id.ClusterID, req); err != nil {
+		switch {
+		case errors.Is(err, fleet.ErrNoIdentity):
+			return nil, status.Error(codes.Unauthenticated, err.Error())
+		case errors.Is(err, fleet.ErrForbidden):
+			return nil, status.Error(codes.PermissionDenied, err.Error())
+		default:
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+	}
+	return &pb.HeartbeatResponse{}, nil
 }
 
 func (s *Server) Ingest(ctx context.Context, payload *pb.AlertPayload) (*pb.IngestResponse, error) {

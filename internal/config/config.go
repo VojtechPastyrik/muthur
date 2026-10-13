@@ -122,6 +122,21 @@ type Config struct {
 	CorrelationWindowSeconds int
 	CorrelationMaxGroup      int
 
+	// Fleet watchdog notices collectors that stopped sending heartbeats. It
+	// is the only place a dead cluster can be noticed: an absent() rule in the
+	// cluster's own Prometheus dies together with the cluster it watches.
+	WatchdogEnabled         bool
+	WatchdogInterval        time.Duration
+	WatchdogStaleMultiplier float64
+	WatchdogStaleFloor      time.Duration
+	// WatchdogPipelineStale is how long a cluster's alerting path may go
+	// without delivering a Watchdog alert before the brain reports it broken.
+	WatchdogPipelineStale time.Duration
+	// FleetRosterTTL ages out a heartbeat record nobody refreshed. Backstop
+	// against a roster that only grows: a cluster that was torn down without
+	// being revoked leaves on its own instead of paging forever.
+	FleetRosterTTL time.Duration
+
 	// Feedback. PublicURL must be set for feedback links to be emitted.
 	PublicURL       string
 	FeedbackFewShot int
@@ -180,6 +195,28 @@ func Load() (*Config, error) {
 	correlationEnabled, _ := strconv.ParseBool(envOr("CORRELATION_ENABLED", "false"))
 	correlationWindow, _ := strconv.Atoi(envOr("CORRELATION_WINDOW_SECONDS", "30"))
 	correlationMaxGroup, _ := strconv.Atoi(envOr("CORRELATION_MAX_GROUP", "25"))
+
+	watchdogEnabled, _ := strconv.ParseBool(envOr("WATCHDOG_ENABLED", "true"))
+	watchdogInterval, err := time.ParseDuration(envOr("WATCHDOG_INTERVAL", "30s"))
+	if err != nil {
+		return nil, fmt.Errorf("parse WATCHDOG_INTERVAL: %w", err)
+	}
+	watchdogStaleMultiplier, err := strconv.ParseFloat(envOr("WATCHDOG_STALE_MULTIPLIER", "3"), 64)
+	if err != nil {
+		return nil, fmt.Errorf("parse WATCHDOG_STALE_MULTIPLIER: %w", err)
+	}
+	watchdogStaleFloor, err := time.ParseDuration(envOr("WATCHDOG_STALE_FLOOR", "2m"))
+	if err != nil {
+		return nil, fmt.Errorf("parse WATCHDOG_STALE_FLOOR: %w", err)
+	}
+	watchdogPipelineStale, err := time.ParseDuration(envOr("WATCHDOG_PIPELINE_STALE", "10m"))
+	if err != nil {
+		return nil, fmt.Errorf("parse WATCHDOG_PIPELINE_STALE: %w", err)
+	}
+	fleetRosterTTL, err := time.ParseDuration(envOr("FLEET_ROSTER_TTL", "168h"))
+	if err != nil {
+		return nil, fmt.Errorf("parse FLEET_ROSTER_TTL: %w", err)
+	}
 
 	fewShot, _ := strconv.Atoi(envOr("FEEDBACK_FEW_SHOT", "3"))
 
@@ -282,6 +319,13 @@ func Load() (*Config, error) {
 		CorrelationEnabled:       correlationEnabled,
 		CorrelationWindowSeconds: correlationWindow,
 		CorrelationMaxGroup:      correlationMaxGroup,
+
+		WatchdogEnabled:         watchdogEnabled,
+		WatchdogInterval:        watchdogInterval,
+		WatchdogStaleMultiplier: watchdogStaleMultiplier,
+		WatchdogStaleFloor:      watchdogStaleFloor,
+		WatchdogPipelineStale:   watchdogPipelineStale,
+		FleetRosterTTL:          fleetRosterTTL,
 
 		PublicURL:       os.Getenv("MUTHUR_PUBLIC_URL"),
 		FeedbackFewShot: fewShot,

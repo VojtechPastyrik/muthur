@@ -40,6 +40,7 @@ const (
 	PathBootstrap = "/muthur/v1/bootstrap"
 	PathIngest    = "/muthur/v1/ingest"
 	PathSignCSR   = "/muthur/v1/sign-csr"
+	PathHeartbeat = "/muthur/v1/heartbeat"
 
 	// maxBody bounds a sealed request. The collector caps redacted logs at
 	// 256 KiB and metrics are small; 8 MiB leaves headroom without letting
@@ -94,6 +95,7 @@ func New(d Deps) http.Handler {
 	r.Post(PathBootstrap, s.bootstrap)
 	r.Post(PathIngest, s.ingest)
 	r.Post(PathSignCSR, s.signCSR)
+	r.Post(PathHeartbeat, s.heartbeat)
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
@@ -185,6 +187,16 @@ func (s *server) signCSR(w http.ResponseWriter, r *http.Request) {
 			return nil, status.Error(codes.InvalidArgument, "malformed SignCSRRequest")
 		}
 		return s.Brain.SignCSR(ctx, &req)
+	})
+}
+
+func (s *server) heartbeat(w http.ResponseWriter, r *http.Request) {
+	s.handle(w, r, PathHeartbeat, true, func(ctx context.Context, in []byte) (proto.Message, error) {
+		var req pb.HeartbeatRequest
+		if err := proto.Unmarshal(in, &req); err != nil {
+			return nil, status.Error(codes.InvalidArgument, "malformed HeartbeatRequest")
+		}
+		return s.Brain.Heartbeat(ctx, &req)
 	})
 }
 

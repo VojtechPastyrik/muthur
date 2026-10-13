@@ -33,15 +33,27 @@ func FormatIncidentMessage(representative *pb.AlertPayload, alerts []*pb.AlertPa
 	}
 }
 
+// defaultLogsDatasource is used when a collector reports no datasource name —
+// every collector before the field existed ran against Loki.
+const defaultLogsDatasource = "Loki"
+
 func buildGrafanaURL(payload *pb.AlertPayload) string {
 	if payload == nil || payload.GrafanaBaseUrl == "" {
 		return ""
 	}
 
+	// The stream-selector expression is shared: LogsQL accepts Loki's
+	// {label="value"} stream filter verbatim, so only the datasource name
+	// differs between a Loki and a VictoriaLogs cluster.
+	datasource := payload.GrafanaLogsDatasource
+	if datasource == "" {
+		datasource = defaultLogsDatasource
+	}
+
 	params := url.Values{}
 	params.Set("orgId", "1")
-	params.Set("left", fmt.Sprintf(`["now-1h","now","Loki",{"expr":"{namespace=\"%s\", pod=\"%s\"}"}]`,
-		payload.Namespace, payload.PodName))
+	params.Set("left", fmt.Sprintf(`["now-1h","now",%q,{"expr":"{namespace=\"%s\", pod=\"%s\"}"}]`,
+		datasource, payload.Namespace, payload.PodName))
 
 	return fmt.Sprintf("%s/explore?%s", strings.TrimRight(payload.GrafanaBaseUrl, "/"), params.Encode())
 }

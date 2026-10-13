@@ -111,10 +111,17 @@ func (p *pki) leaf(t *testing.T, clusterID string) (*x509.Certificate, *ecdsa.Pr
 
 type fakeBrain struct {
 	pb.UnimplementedBrainServer
-	lastIdentity *auth.Identity
-	lastPayload  *pb.AlertPayload
-	bootstrapReq *pb.BootstrapRequest
-	ingestErr    error
+	lastIdentity  *auth.Identity
+	lastPayload   *pb.AlertPayload
+	bootstrapReq  *pb.BootstrapRequest
+	lastHeartbeat *pb.HeartbeatRequest
+	ingestErr     error
+}
+
+func (f *fakeBrain) Heartbeat(ctx context.Context, r *pb.HeartbeatRequest) (*pb.HeartbeatResponse, error) {
+	f.lastIdentity, _ = auth.FromContext(ctx)
+	f.lastHeartbeat = r
+	return &pb.HeartbeatResponse{}, nil
 }
 
 func (f *fakeBrain) Ingest(ctx context.Context, p *pb.AlertPayload) (*pb.IngestResponse, error) {
@@ -441,5 +448,46 @@ func TestKeys_SignedByIntermediate(t *testing.T) {
 	raw, _ := base64.StdEncoding.DecodeString(kp.Keys[0].PublicKey)
 	if pub, err := auth.ParseHPKEPublicKey(raw); err != nil || auth.HPKEKeyID(pub) != f.pub.KID {
 		t.Fatalf("public key does not round-trip: %v", err)
+	}
+}
+
+// The signed transport is the only path available behind a TLS-terminating
+// edge such as Cloudflare Tunnel. A heartbeat that works only over mTLS would
+// leave those deployments permanently reported as down.
+func TestHeartbeatOverSignedTransport(t *testing.T) {
+	f := newFixture(t, false)
+	leaf, key := f.pki.leaf(t, "cluster-a")
+
+	resp, _ := f.do(t, call{
+		path: signedsrv.PathHeartbeat,
+		msg: &pb.HeartbeatRequest{
+			ClusterId:        "cluster-a",
+			CollectorVersion: "0.12.0",
+			IntervalSeconds:  60,
+			PipelineLastSeen: 1760000000,
+		},
+		leaf: leaf, key: key,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("heartbeat rejected: %d", resp.StatusCode)
+	}
+	if f.brain.lastHeartbeat == nil {
+		t.Fatal("heartbeat never reached the brain")
+	}
+	if f.brain.lastHeartbeat.GetPipelineLastSeen() != 1760000000 {
+		t.Fatalf("pipeline probe not carried: %+v", f.brain.lastHeartbeat)
+	}
+	// Identity must come from the signature, exactly as for Ingest — a
+	// collector must not be able to report liveness for another tenant.
+	if f.brain.lastIdentity == nil || f.brain.lastIdentity.ClusterID != "cluster-a" {
+		t.Fatalf("identity not established: %+v", f.brain.lastIdentity)
+	}
+}
+
+func TestHeartbeatRequiresAuthentication(t *testing.T) {
+	f := newFixture(t, false)
+	resp, _ := f.do(t, call{path: signedsrv.PathHeartbeat, msg: &pb.HeartbeatRequest{ClusterId: "cluster-a"}})
+	if resp.StatusCode == http.StatusOK {
+		t.Fatal("an unsigned heartbeat must be refused")
 	}
 }

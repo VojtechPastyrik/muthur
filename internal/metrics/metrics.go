@@ -125,6 +125,39 @@ var (
 		Help: "Incident records persisted to history.",
 	})
 
+	// Heartbeats counts liveness beats accepted from collectors.
+	Heartbeats = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "muthur_collector_heartbeats_total",
+		Help: "Liveness beats accepted from collectors, by cluster.",
+	}, []string{"cluster_id"})
+
+	// CollectorUp is 1 while a collector's heartbeats are arriving within the
+	// staleness threshold, 0 once the watchdog has declared it down. Retired
+	// clusters (revoked tenant, graceful shutdown) are deleted from the vector
+	// rather than pinned at 0, so a decommissioned cluster stops producing a
+	// series instead of alerting forever.
+	CollectorUp = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "muthur_collector_up",
+		Help: "1 when the cluster's collector is heartbeating, 0 when the watchdog declared it down.",
+	}, []string{"cluster_id"})
+
+	// CollectorLastSeen is the unix timestamp of the most recent heartbeat.
+	// Exported alongside CollectorUp so an operator can alert on staleness in
+	// their own Prometheus without depending on the brain's notifier path.
+	CollectorLastSeen = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "muthur_collector_last_seen_seconds",
+		Help: "Unix timestamp of the last heartbeat received from the cluster's collector.",
+	}, []string{"cluster_id"})
+
+	// CollectorPipelineLastSeen is the unix timestamp of the last Watchdog
+	// alert that reached a cluster's collector through its own AlertManager.
+	// Distinct from CollectorLastSeen: that one proves the collector runs,
+	// this one proves the whole alerting path behind it still delivers.
+	CollectorPipelineLastSeen = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "muthur_collector_pipeline_last_seen_seconds",
+		Help: "Unix timestamp of the last Watchdog alert delivered through the cluster's alerting pipeline.",
+	}, []string{"cluster_id"})
+
 	// PipelineInFlight tracks alerts/incidents currently being processed.
 	PipelineInFlight = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "muthur_pipeline_in_flight",
